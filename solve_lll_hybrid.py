@@ -1,7 +1,7 @@
 from constants import TIMEOUT
 import time
 from ortools.sat.python import cp_model
-from lll_utils import filter_binary_vectors, extract_vectors_from_basis
+from utils import filter_binary_vectors, extract_vectors_from_basis
 from fpylll import LLL
 from SubsetSumInstance import SubsetSumInstance
 from results import SolveResult
