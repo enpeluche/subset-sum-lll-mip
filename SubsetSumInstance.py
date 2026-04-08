@@ -189,6 +189,35 @@ class SubsetSumInstance:
 
         return cls(weights, target, solution=solution)
 
+    @classmethod
+    def create_crypto_density_no_overflow_feasible(
+        cls, n: int, density: float
+    ) -> "SubsetSumInstance":
+        """
+        Generates an instance without the 64-bit constraint.
+
+        Weights can be arbitrarily large. This is intended for solvers that
+        support arbitrary precision (like pure Python algorithms or LLL)
+        and WILL cause integer overflows in C++ solvers like CP-SAT.
+
+        Args:
+            n: The number of elements.
+            density: The target density (d = n / log2(max_weight)).
+
+        Returns:
+            A new SubsetSumInstance.
+        """
+        import random
+
+        # No safety check here! We allow massive integers.
+        max_weight = int(2 ** (n / density))
+        weights: list[int] = [random.randint(1, max_weight) for _ in range(n)]
+
+        solution: list[int] = [random.choice([0, 1]) for _ in range(n)]
+        target: int = sum((w * s for w, s in zip(weights, solution)), 0)
+
+        return cls(weights, target, solution=solution)
+
     def get_sorted(self, reverse: bool = True) -> "SubsetSumInstance":
         if self.solution is not None:
             paired = list(zip(self.weights, self.solution))
