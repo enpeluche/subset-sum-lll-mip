@@ -1,3 +1,7 @@
 or_env
 __pycache__
 cysignals_crash_logs
+*.csv
+results
+*.png
+json
