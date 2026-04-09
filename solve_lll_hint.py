@@ -1,7 +1,7 @@
 from constants import TIMEOUT
 import time
 from ortools.sat.python import cp_model
-from util import (
+from utils import (
     knapsack_matrix,
     filter_binary_candidates,
     extract_coefficient_submatrix,
