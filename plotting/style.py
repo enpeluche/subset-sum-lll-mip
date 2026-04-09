@@ -3,9 +3,14 @@ SOLVER_STYLES = {
     "cpsat": {"color": "#e74c3c", "marker": "s", "label": "CP-SAT pur"},
     "lll": {"color": "#3498db", "marker": "o", "label": "LLL + CP-SAT"},
     "bkz": {"color": "#2ecc71", "marker": "^", "label": "BKZ(30) + CP-SAT"},
-    "local_search": {"color": "#9b59b6", "marker": "D", "label": "Recherche locale"},
+    "adaptive": {"color": "#f39c12", "marker": "D", "label": "Adaptive (LLL→BKZ)"},
+    "mitm": {"color": "#9b59b6", "marker": "v", "label": "MITM classique"},
+    "ultimate": {
+        "color": "#1abc9c",
+        "marker": "*",
+        "label": "Ultimate (LLL→BKZ→MITM→CP-SAT)",
+    },
 }
-
 DEFAULT_STYLE = {"color": "gray", "marker": "x", "label": "Solveur"}
 
 

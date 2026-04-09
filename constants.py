@@ -5,7 +5,7 @@ All tuneable parameters are defined here so they can be changed in one place
 without hunting through the codebase.
 """
 
-from util import get_min_density
+from SubsetSumInstance import SubsetSumInstance
 
 # =============================================================================
 # Solver configuration
@@ -13,7 +13,7 @@ from util import get_min_density
 
 # Maximum wall-clock time (in seconds) allocated per solve call.
 # Applies to both the vanilla CP-SAT baseline and the hybrid fallback.
-TIMEOUT: float = 30.0
+TIMEOUT: float = 100.0
 
 # Time budget (in seconds) allocated to each individual hint attempt
 # in the hybrid solver. Kept short: a good hint converges in milliseconds;
@@ -28,12 +28,14 @@ MICRO_TIMEOUT: float = 2.0
 N: int = 30
 
 # Number of runs per density value
-N_RUNS: int = 10
+N_RUNS: int = 100
 
 # Density grid: starts just above the minimum safe density for N,
 # then increments by 0.05 up to 40 steps.
 # The minimum density ensures weights stay within CP-SAT's 64-bit integer limit.
-DENSITIES: list[float] = [get_min_density(N) + 0.05 * i for i in range(40)]
+DENSITIES: list[float] = [
+    SubsetSumInstance.get_min_safe_density(N) + 0.025 * i for i in range(80)
+]
 
 # =============================================================================
 # Output configuration

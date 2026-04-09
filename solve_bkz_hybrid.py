@@ -105,7 +105,7 @@ def solve_bkz_hybrid(
                 elapsed=time.perf_counter() - start,
                 branches=total_branches,
                 conflicts=total_conflicts,
-                status=status,
+                status=int(status),
                 solution=[solver.value(x[i]) for i in range(n)],
                 label=f"Binary_Hint_{idx + 1}",
                 best_res=best_residual,
@@ -133,6 +133,7 @@ def solve_bkz_hybrid(
     model = cp_model.CpModel()
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = remaining
+    solver.parameters.num_search_workers = 8
 
     x = [model.new_bool_var(f"x{i}") for i in range(n)]
     model.add(sum(instance.weights[i] * x[i] for i in range(n)) == instance.target)

@@ -124,6 +124,7 @@ def solve_lll_hybrid(
     model = cp_model.CpModel()
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = remaining
+    solver.parameters.num_search_workers = 8
 
     x = [model.new_bool_var(f"x{i}") for i in range(n)]
     model.add(sum(instance.weights[i] * x[i] for i in range(n)) == instance.target)

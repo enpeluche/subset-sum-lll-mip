@@ -29,7 +29,9 @@ def plot_lll_geometry(
         vals = [
             getattr(r.results[solver], attr)
             for r in records
-            if r.density == d and r.results[solver].best_res is not None
+            if r.density == d
+            and solver in r.results
+            and r.results[solver].best_res is not None
         ]
         return np.mean(vals) if vals else 0
 

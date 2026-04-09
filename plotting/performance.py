@@ -6,6 +6,7 @@ from .style import get_style
 def plot_performance(
     stats: dict,
     densities: list[float],
+    n: int,
     save_path: str | None = None,
 ) -> None:
     """
@@ -85,7 +86,7 @@ def plot_performance(
         ax.axvline(x=1.0, color="gray", linestyle="--", linewidth=0.8, alpha=0.5)
 
     fig.suptitle(
-        f"CP-SAT vs LLL+CP-SAT vs BKZ(30)+CP-SAT — n={_infer_n(stats, densities)}",
+        f"CP-SAT vs LLL+CP-SAT vs BKZ(30)+CP-SAT — n={n}",
         fontsize=13,
         fontweight="bold",
     )
