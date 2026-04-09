@@ -14,7 +14,9 @@ class SolveResult:
     best_ham: int | None
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d["status"] = int(d["status"])  # force int pour JSON
+        return d
 
 
 @dataclass
