@@ -1,4 +1,5 @@
 or_env
+venv
 __pycache__
 cysignals_crash_logs
 *.csv
