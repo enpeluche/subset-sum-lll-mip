@@ -1,0 +1,14 @@
+__test__: dict
+default_strategy: bytes
+default_strategy_path: bytes
+float_types: tuple
+have_long_double: bool
+have_qd: bool
+have_recursive_enum: bool
+int_types: tuple
+major_version: int
+max_enum_dim: int
+max_parallel_enum_dim: int
+micro_version: int
+minor_version: int
+version: str
