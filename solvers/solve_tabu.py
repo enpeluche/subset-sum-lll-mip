@@ -1,3 +1,14 @@
+"""
+Tabu Search solver for Subset Sum.
+
+Three flavours:
+    - Classic tabu:  evaluate all n neighbours, pick best non-tabu
+    - Gray tabu:     follow Gray code order, flip one bit per iter (O(1) neighbour)
+    - Beckett-Gray:  actors enter/exit in dramatic LIFO order (for the culture)
+
+Warm start options: LLL clip, sign extraction, or random.
+"""
+
 import time
 import random
 import math
@@ -5,24 +16,17 @@ import math
 from SubsetSumInstance import SubsetSumInstance
 from results import SolveResult
 from utils import extract_vectors_from_basis, filter_binary_vectors
-from fpylll import LLL, BKZ
+from fpylll import LLL
+
+
+# =====================================================================
+# Warm starts
+# =====================================================================
 
 def _lll_warm_start(instance: SubsetSumInstance, scaling: int) -> list[int]:
     """
-    Use LLL to generate a warm start binary vector.
-
-    Even if LLL vectors are non-binary ({-3,...,3}), we clip them to {0,1}.
-    This gives a starting point geometrically close to the solution.
-
-    Strategy: among all LLL basis vectors, pick the one with minimum
-    residual after clipping. Falls back to random if LLL fails.
-
-    Args:
-        instance: A SubsetSumInstance.
-        scaling:  Lattice scaling factor M.
-
-    Returns:
-        Binary vector of length n.
+    LLL warm start: reduce the knapsack lattice, clip basis vectors to {0,1},
+    return the one with smallest residual.
     """
     n = instance.n
     B = instance.to_knapsack_matrix(M=scaling)
@@ -32,250 +36,354 @@ def _lll_warm_start(instance: SubsetSumInstance, scaling: int) -> list[int]:
     if not vectors:
         return [random.randint(0, 1) for _ in range(n)]
 
-    # Check for direct binary candidates first
-    candidates = filter_binary_vectors(vectors)
-    if candidates:
-        candidates.sort(key=lambda c: abs(instance.residual(c)))
-        if instance.is_solution(candidates[0]):
-            return candidates[0]
+    # Direct binary solution?
+    for v in filter_binary_vectors(vectors):
+        if instance.is_solution(v):
+            return v
 
-    # Clip all vectors and pick best by residual
-    best_x = None
-    best_res = float("inf")
-
+    # Clip all vectors, keep best by residual
+    best_x, best_res = None, float("inf")
     for v in vectors:
-        # Clip to {0,1} — handles values like -2, 3 etc.
         x = [max(0, min(1, round(float(c)))) for c in v]
         res = abs(instance.residual(x))
         if res < best_res:
-            best_res = res
-            best_x = x
+            best_res, best_x = res, x
 
-    return best_x if best_x is not None else [random.randint(0, 1) for _ in range(n)]
+    return best_x or [random.randint(0, 1) for _ in range(n)]
 
 
 def _sign_warm_start(instance: SubsetSumInstance, scaling: int) -> list[int]:
-    """
-    Alternative warm start: use sign of shortest LLL vector.
-    1 if v_j > 0, else 0. Different from clip for negative/large values.
-    """
+    """Sign of shortest LLL vector: 1 if v_j > 0, else 0."""
     n = instance.n
     B = instance.to_knapsack_matrix(M=scaling)
     LLL.reduction(B)
     vectors = extract_vectors_from_basis(B)
-
     if not vectors:
         return [random.randint(0, 1) for _ in range(n)]
-
-    v = vectors[0]
-    return [1 if c > 0 else 0 for c in v]
+    return [1 if c > 0 else 0 for c in vectors[0]]
 
 
-# =============================================================================
-# Core Tabu Search
-# =============================================================================
+def _random_start(n: int) -> list[int]:
+    return [random.randint(0, 1) for _ in range(n)]
 
 
-def _tabu_search(
+WARM_STARTS = {
+    "lll":    lambda inst, s: _lll_warm_start(inst, s),
+    "sign":   lambda inst, s: _sign_warm_start(inst, s),
+    "random": lambda inst, s: _random_start(inst.n),
+}
+
+
+# =====================================================================
+# Classic Tabu Search — O(n) per iteration
+# =====================================================================
+
+def _tabu_classic(
     instance: SubsetSumInstance,
     x_init: list[int],
     n_iter: int,
     tenure: int,
-    start_time: float,
-    iter_budget: float,
-) -> tuple[list[int] | None, int]:
+    deadline: float,
+) -> tuple[list[int] | None, int, int]:
     """
-    Core tabu search loop.
+    Standard tabu: evaluate all n flips, pick best non-tabu (or aspiration).
 
-    Args:
-        instance:     SubsetSumInstance.
-        x_init:       Initial binary vector.
-        n_iter:       Max iterations.
-        tenure:       Tabu tenure (how long a flip is forbidden).
-        start_time:   Global start time (for timeout check).
-        iter_budget:  Max wall time for this tabu run.
-
-    Returns:
-        (solution, branches) where solution is None if not found.
+    Returns: (solution_or_None, branches, best_residual)
     """
     n = instance.n
-    weights = instance.weights
-    T = instance.target
+    w = instance.weights
 
     x = x_init.copy()
-    residual = instance.residual(x)  # signed residual Σaᵢxᵢ - T
+    residual = instance.residual(x)
 
     best_x = x.copy()
     best_res = abs(residual)
 
-    # Tabu list: tabu_list[j] = iteration until which j is tabu
     tabu_until = [0] * n
     branches = 0
-    deadline = start_time + iter_budget
 
     for it in range(n_iter):
-
         if time.perf_counter() > deadline:
             break
 
-        # ------------------------------------------------------------------
-        # Evaluate all 1-flip neighbours
-        # ------------------------------------------------------------------
-        best_move = -1
-        best_move_res = float("inf")
+        best_j, best_move_res = -1, float("inf")
 
         for j in range(n):
             branches += 1
-
-            # Delta residual if we flip j
-            # x[j]=0 → flip to 1 : residual += w[j]
-            # x[j]=1 → flip to 0 : residual -= w[j]
-            delta = weights[j] if x[j] == 0 else -weights[j]
+            delta = w[j] if x[j] == 0 else -w[j]
             new_res = abs(residual + delta)
-
             is_tabu = tabu_until[j] > it
-            aspiration = new_res < best_res  # aspiration criterion
+            aspiration = new_res < best_res
 
             if (not is_tabu or aspiration) and new_res < best_move_res:
-                best_move = j
-                best_move_res = new_res
+                best_j, best_move_res = j, new_res
 
-        if best_move == -1:
-            break  # all moves tabu and no aspiration
+        if best_j == -1:
+            break
 
-        # ------------------------------------------------------------------
-        # Apply best move
-        # ------------------------------------------------------------------
-        delta = weights[best_move] if x[best_move] == 0 else -weights[best_move]
-        x[best_move] = 1 - x[best_move]
+        # Apply
+        delta = w[best_j] if x[best_j] == 0 else -w[best_j]
+        x[best_j] = 1 - x[best_j]
         residual += delta
-        tabu_until[best_move] = it + tenure
+        tabu_until[best_j] = it + tenure
 
-        # ------------------------------------------------------------------
-        # Update best
-        # ------------------------------------------------------------------
         if abs(residual) < best_res:
             best_res = abs(residual)
             best_x = x.copy()
 
         if residual == 0:
-            return x, branches  # solution found
+            return x, branches, 0
 
-    # Return best found (may not be solution)
-    if best_res == 0:
-        return best_x, branches
-    return None, branches
+    return (best_x if best_res == 0 else None), branches, best_res
 
 
-# =============================================================================
+# =====================================================================
+# Gray Tabu Search — O(1) per iteration
+# =====================================================================
+
+def _gray_bit(i: int) -> int:
+    """Bit that flips between Gray(i-1) and Gray(i)."""
+    return (i & -i).bit_length() - 1
+
+
+def _tabu_gray(
+    instance: SubsetSumInstance,
+    x_init: list[int],
+    n_iter: int,
+    tenure: int,
+    deadline: float,
+) -> tuple[list[int] | None, int, int]:
+    """
+    Gray code tabu: flip bits in Gray code order.
+    Each iteration is O(1) — no neighbourhood scan.
+    If the Gray-chosen bit is tabu, skip (no aspiration for simplicity).
+
+    The idea: Gray code guarantees every bit gets flipped regularly,
+    giving a structured exploration without the O(n) scan.
+    """
+    n = instance.n
+    w = instance.weights
+
+    x = x_init.copy()
+    residual = instance.residual(x)
+
+    best_x = x.copy()
+    best_res = abs(residual)
+
+    tabu_until = [0] * n
+    branches = 0
+
+    for it in range(1, n_iter + 1):
+        if time.perf_counter() > deadline:
+            break
+
+        # Gray code tells us which bit to flip
+        j = _gray_bit(it) % n
+        branches += 1
+
+        if tabu_until[j] > it:
+            # Tabu — but check aspiration
+            delta = w[j] if x[j] == 0 else -w[j]
+            if abs(residual + delta) >= best_res:
+                continue  # skip
+
+        # Flip
+        delta = w[j] if x[j] == 0 else -w[j]
+        x[j] = 1 - x[j]
+        residual += delta
+        tabu_until[j] = it + tenure
+
+        if abs(residual) < best_res:
+            best_res = abs(residual)
+            best_x = x.copy()
+
+        if residual == 0:
+            return x, branches, 0
+
+    return (best_x if best_res == 0 else None), branches, best_res
+
+
+# =====================================================================
+# Beckett-Gray Tabu — for the culture
+# =====================================================================
+
+def _beckett_ordering(n: int) -> list[int]:
+    """
+    Generate the Beckett-Gray code bit-flip sequence for n bits.
+    Recursive construction — only works for small n (known for n ≤ 6,
+    and n = 2,4,5,6 specifically). Falls back to standard Gray for others.
+
+    In a Beckett play, actors enter and exit a stage such that
+    the last actor to enter is always the first to leave (LIFO).
+    """
+    # For practical purposes, use standard Gray (Beckett-Gray is an open problem
+    # for most n). The joke is in the name, the implementation is Gray.
+    size = 1 << n
+    flips = []
+    for i in range(1, size):
+        flips.append(_gray_bit(i) % n)
+    return flips
+
+
+def _tabu_beckett(
+    instance: SubsetSumInstance,
+    x_init: list[int],
+    n_iter: int,
+    tenure: int,
+    deadline: float,
+) -> tuple[list[int] | None, int, int]:
+    """
+    'Beckett-Gray' tabu search.
+    
+    En attendant Godot... on utilise du Gray standard, parce que le vrai
+    Beckett-Gray est un problème ouvert. Mais le nom est plus classe.
+    """
+    # Precompute the flip sequence, then cycle through it
+    n = instance.n
+    w = instance.weights
+    flip_seq = _beckett_ordering(n)
+    seq_len = len(flip_seq)
+
+    x = x_init.copy()
+    residual = instance.residual(x)
+
+    best_x = x.copy()
+    best_res = abs(residual)
+
+    tabu_until = [0] * n
+    branches = 0
+
+    for it in range(n_iter):
+        if time.perf_counter() > deadline:
+            break
+
+        j = flip_seq[it % seq_len]
+        branches += 1
+
+        if tabu_until[j] > it:
+            delta = w[j] if x[j] == 0 else -w[j]
+            if abs(residual + delta) >= best_res:
+                continue
+
+        delta = w[j] if x[j] == 0 else -w[j]
+        x[j] = 1 - x[j]
+        residual += delta
+        tabu_until[j] = it + tenure
+
+        if abs(residual) < best_res:
+            best_res = abs(residual)
+            best_x = x.copy()
+
+        if residual == 0:
+            return x, branches, 0
+
+    return (best_x if best_res == 0 else None), branches, best_res
+
+
+TABU_ENGINES = {
+    "classic": _tabu_classic,
+    "gray":    _tabu_gray,
+    "beckett": _tabu_beckett,
+}
+
+
+# =====================================================================
 # Main solver
-# =============================================================================
-
+# =====================================================================
 
 def solve_tabu(
     instance: SubsetSumInstance,
+    warm_start: str = "lll",
+    engine: str = "classic",
     scaling: int | None = None,
-    warm_start: str = "lll", # "lll", "bkz", "random", "greedy"
     n_iter: int = 10_000,
-    tenure: int = 7,
+    tenure: int | None = None,
     n_restarts: int = 5,
-    warm_start: str = "lll",  # "lll", "sign", "random"
+    timeout: float = 10.0,
 ) -> SolveResult:
-    
-    # 1. Sélection de la stratégie de Warm Start
-    if warm_start == "lll":
-        x_init = _lll_warm_start(instance, scaling=2**instance.n)
-    elif warm_start == "bkz":
-        x_init = _bkz_warm_start(instance) # Version plus musclée mais plus lente
-    elif warm_start == "greedy":
-        x_init = _greedy_warm_start(instance) # Utilise tes bornes gloutonnes
-    else:
-        x_init = [random.randint(0, 1) for _ in range(instance.n)]
-        
+    """
+    Tabu search with restarts.
+
+    Args:
+        instance:    SubsetSumInstance to solve.
+        warm_start:  "lll", "sign", or "random".
+        engine:      "classic" (O(n)/iter), "gray" (O(1)/iter), or "beckett".
+        scaling:     Lattice scaling factor (default 2^n).
+        n_iter:      Max iterations per restart.
+        tenure:      Tabu tenure (default n//4).
+        n_restarts:  Number of restarts.
+        timeout:     Wall clock budget in seconds.
+    """
     start = time.perf_counter()
     n = instance.n
-    total_branches = 0
-    total_conflicts = 0
+
+    if instance.is_trivially_infeasible:
+        return SolveResult.trivially_infeasible(time.perf_counter() - start)
 
     if scaling is None:
-        scaling = 2 ** n
+        scaling = 1 << n
+    if tenure is None:
+        tenure = max(2, n // 4)
 
-    budget_per_restart = (10.0 - 0.1) / n_restarts  # reserve 100ms for LLL
+    # --- Warm start ---
+    init_fn = WARM_STARTS.get(warm_start, WARM_STARTS["random"])
+    x_init = init_fn(instance, scaling)
 
-    # ------------------------------------------------------------------
-    # Step 1 — LLL warm start
-    # ------------------------------------------------------------------
-    if warm_start == "lll":
-        x_init = _lll_warm_start(instance, scaling)
-    elif warm_start == "sign":
-        x_init = _sign_warm_start(instance, scaling)
-    else:
-        x_init = [random.randint(0, 1) for _ in range(n)]
-
-    # Check if LLL clip is already a solution
     if instance.is_solution(x_init):
         return SolveResult(
             elapsed=time.perf_counter() - start,
-            branches=0,
-            conflicts=0,
-            status=0,
+            branches=0, conflicts=0, status=0,
             solution=x_init,
-            label="Tabu_Direct",
+            label=f"Tabu_Direct_{warm_start}",
             best_res=0,
             best_ham=instance.hamming_to_solution(x_init),
         )
 
+    # --- Tabu with restarts ---
+    search_fn = TABU_ENGINES.get(engine, _tabu_classic)
+    total_branches = 0
     best_residual = abs(instance.residual(x_init))
-    best_hamming = instance.hamming_to_solution(x_init)
+    budget_per_restart = timeout / n_restarts
 
-    # ------------------------------------------------------------------
-    # Step 2 — Tabu search with restarts
-    # ------------------------------------------------------------------
     for restart in range(n_restarts):
-        elapsed = time.perf_counter() - start
-        if elapsed >= 10.0:
+        remaining = timeout - (time.perf_counter() - start)
+        if remaining <= 0:
             break
 
-        # First restart: LLL warm start
-        # Subsequent restarts: random perturbation of best known start
+        deadline = time.perf_counter() + min(budget_per_restart, remaining)
+
+        # First restart: warm start. Others: random perturbation.
         if restart == 0:
             x_start = x_init.copy()
         else:
-            # Perturb: flip k random bits of the warm start
             x_start = x_init.copy()
-            k_perturb = random.randint(1, max(1, n // 5))
-            for j in random.sample(range(n), k_perturb):
+            k = random.randint(1, max(1, n // 5))
+            for j in random.sample(range(n), k):
                 x_start[j] = 1 - x_start[j]
 
-        solution, branches = _tabu_search(
-            instance=instance,
-            x_init=x_start,
-            n_iter=n_iter,
-            tenure=tenure,
-            start_time=start,
-            iter_budget=budget_per_restart,
+        solution, branches, res = search_fn(
+            instance, x_start, n_iter, tenure, deadline,
         )
         total_branches += branches
+        best_residual = min(best_residual, res)
 
         if solution is not None and instance.is_solution(solution):
             return SolveResult(
                 elapsed=time.perf_counter() - start,
                 branches=total_branches,
-                conflicts=total_conflicts,
-                status=0,
+                conflicts=0, status=0,
                 solution=solution,
-                label=f"Tabu_restart_{restart + 1}",
-                best_res=best_residual,
-                best_ham=best_hamming,
+                label=f"Tabu_{engine}_r{restart + 1}",
+                best_res=0,
+                best_ham=instance.hamming_to_solution(solution),
             )
 
     return SolveResult(
         elapsed=time.perf_counter() - start,
         branches=total_branches,
-        conflicts=total_conflicts,
-        status=3,
+        conflicts=0, status=3,
         solution=None,
-        label="Tabu_NotFound",
+        label=f"Tabu_{engine}_NotFound",
         best_res=best_residual,
-        best_ham=best_hamming,
+        best_ham=None,
     )
