@@ -6,3 +6,7 @@ cysignals_crash_logs
 results
 *.png
 json
+*.pkl
+ml
+models
+*.json
