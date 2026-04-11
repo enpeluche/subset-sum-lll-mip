@@ -1,5 +1,5 @@
 from fpylll import IntegerMatrix
-
+import math
 
 def extract_vectors_from_basis(matrix: IntegerMatrix) -> list[list[int]]:
     """
@@ -14,10 +14,17 @@ def extract_vectors_from_basis(matrix: IntegerMatrix) -> list[list[int]]:
     Returns:
         List of n+1 vectors of length n.
     """
-    return [
-        [matrix[j][i + 1] for i in range(matrix.ncols - 1)] for j in range(matrix.nrows)
-    ]
 
+    n = matrix.ncols - 1
+    extracted = []
+
+    for j in range(matrix.nrows):
+        v = [matrix[j][i + 1] for i in range(n)]
+        extracted.append(v)
+
+    extracted.sort(key=lambda v: sum(x*x for x in v))
+    
+    return extracted
 
 def filter_binary_vectors(sub: list[list[int]]) -> list[list[int]]:
     """
@@ -32,4 +39,16 @@ def filter_binary_vectors(sub: list[list[int]]) -> list[list[int]]:
     Returns:
         Subset of vectors with all entries in {0, 1}.
     """
-    return [row for row in sub if all(x in (0, 1) for x in row)]
+    binary_set = {0, 1}
+
+    return [v for v in sub if all(x in binary_set for x in v)]
+
+
+def search_space_window(n: int, k_lo: int, k_hi: int) -> int:
+    """Total subsets in [k_lo, k_hi]."""
+    return sum(math.comb(n, k) for k in range(k_lo, k_hi + 1))
+
+
+def enum_cost(n: int, k: int) -> int:
+    """Cost of enumerating subsets of size k — uses symmetry."""
+    return min(math.comb(n, k), math.comb(n, n - k))

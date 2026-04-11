@@ -13,7 +13,7 @@ from SubsetSumInstance import SubsetSumInstance
 
 # Maximum wall-clock time (in seconds) allocated per solve call.
 # Applies to both the vanilla CP-SAT baseline and the hybrid fallback.
-TIMEOUT: float = 100.0
+TIMEOUT: float = 5.0
 
 # Time budget (in seconds) allocated to each individual hint attempt
 # in the hybrid solver. Kept short: a good hint converges in milliseconds;

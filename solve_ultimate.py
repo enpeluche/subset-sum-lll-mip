@@ -37,7 +37,7 @@ from fpylll import LLL, BKZ
 from SubsetSumInstance import SubsetSumInstance
 from results import SolveResult
 from utils import extract_vectors_from_basis, filter_binary_vectors
-from solve_mitm import solve_mitm_classic, _MITM_SKIP
+from solvers.solve_mitm import solve_mitm_classic, _MITM_SKIP
 from constants import TIMEOUT
 
 

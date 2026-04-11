@@ -1,19 +1,13 @@
-# solve_cpsat.py
 """
 Vanilla CP-SAT solver for the Subset Sum problem.
-
-Serves as the baseline against which LLL and BKZ hybrid solvers are benchmarked.
-Uses no hint or warm-start — pure constraint propagation and branch-and-bound.
 """
 
 import time
 from ortools.sat.python import cp_model
 from SubsetSumInstance import SubsetSumInstance
 from results import SolveResult
-from constants import TIMEOUT
 
-
-def solve_cpsat(instance: SubsetSumInstance) -> SolveResult | None:
+def solve_cpsat(instance: SubsetSumInstance, workers: int = 8, timeout: float = 100.0) -> SolveResult:
     """
     Vanilla CP-SAT solver for the Subset Sum problem.
 
@@ -21,34 +15,51 @@ def solve_cpsat(instance: SubsetSumInstance) -> SolveResult | None:
         instance: A SubsetSumInstance (weights, target).
 
     Returns:
-        None if trivially infeasible (sum(weights) < target).
-        Otherwise a SolveResult with timing, search stats, and solution.
+        A SolveResult containing timing, search statistics, and the solution.
+        If trivially infeasible (sum(weights) < target), returns early with Infeasible status.
     """
-    # Early exit: no subset can reach T if the total sum is insufficient.
-    if sum(instance.weights) < instance.target:
-        return None
-
-    n = instance.n
+    
     start = time.perf_counter()
+    n = instance.n
+
+    # 0. Early exit: no subset can reach T if the total sum is insufficient.
+    if instance.is_trivially_infeasible:
+        return SolveResult.trivially_infeasible(time.perf_counter() - start)
+
+    # 1. Model initialization
 
     model = cp_model.CpModel()
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = TIMEOUT
-    solver.parameters.num_search_workers = 8
+
+    solver.parameters.max_time_in_seconds = timeout
+    solver.parameters.num_search_workers = workers
+
+    # 2. Variables and constraints
 
     x = [model.new_bool_var(f"x{i}") for i in range(n)]
+
     model.add(sum(instance.weights[i] * x[i] for i in range(n)) == instance.target)
+
+    # 3. Resolution and verification
 
     status = solver.solve(model)
     solved = status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
 
     solution = None
     if solved:
+        label = "Solved"
         solution = [solver.value(x[i]) for i in range(n)]
+        
         assert instance.is_solution(solution), (
-            f"CP-SAT returned an invalid solution: "
-            f"sum={instance.residual(solution) + instance.target} != T={instance.target}"
+            f"CP-SAT invalid solution! "
+            f"Target={instance.target}, Actual={sum(instance.weights[i] * solution[i] for i in range(n))}"
         )
+    elif status == cp_model.INFEASIBLE:
+        label = "Infeasible"
+    else:
+        label = "Timeout"
+
+    # 4. Result formatting
 
     return SolveResult(
         elapsed=time.perf_counter() - start,
@@ -56,7 +67,7 @@ def solve_cpsat(instance: SubsetSumInstance) -> SolveResult | None:
         conflicts=solver.num_conflicts,
         status=int(status),
         solution=solution,
-        label="Solved" if solved else "Timeout",
+        label=label,
         best_res=None,
         best_ham=None,
     )

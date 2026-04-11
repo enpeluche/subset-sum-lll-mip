@@ -24,6 +24,12 @@ class SubsetSumInstance:
         self.solution = solution
         self.status = "feasible" if solution is not None else status
 
+
+    @property
+    def is_trivially_infeasible(self) -> bool:
+        """Returns True if the target exceeds the sum of all weights."""
+        return sum(self.weights) < self.target
+
     @classmethod
     def create_uniform_feasible(
         cls, n: int, min_weight: int, max_weight: int
@@ -209,8 +215,9 @@ class SubsetSumInstance:
         """
         import random
 
-        # No safety check here! We allow massive integers.
-        max_weight = int(2 ** (n / density))
+        bit_length = int(n / density)
+        max_weight = 1 << bit_length
+
         weights: list[int] = [random.randint(1, max_weight) for _ in range(n)]
 
         solution: list[int] = [random.choice([0, 1]) for _ in range(n)]
