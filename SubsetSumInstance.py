@@ -125,6 +125,12 @@ class SubsetSumInstance:
 
         return self.n / math.log2(max_w)
 
+    @property
+    def fits_int64(self) -> bool:
+        """True if all weights and target fit in CP-SAT's signed int64."""
+        limit = (1 << 63) - 1
+        return max(self.weights) <= limit and self.target <= limit
+
     @staticmethod
     def get_min_safe_density(
         n: int, bits: int = 64, safety_margin: float = 2.0

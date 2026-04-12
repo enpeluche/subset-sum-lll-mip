@@ -43,10 +43,25 @@ def _evaluate_basis(
                 
     return None, best_residual, best_hamming
 
+import math
+
+def _resolve_scaling(instance, scaling):
+    n = instance.n
+    strategies = {
+        "sqrt_n": int(math.ceil(math.sqrt(n))),
+        "n":      n,
+        "sum_w":  sum(instance.weights),
+        "2n":     1 << n,
+        "2n2":    1 << (n // 2),
+    }
+    if isinstance(scaling, int):
+        return scaling
+    return strategies.get(scaling, 1 << n)
+
 def solve_lattice_hybrid(
     instance: SubsetSumInstance,
     strategy: str = "SEQ_LLL_BKZ",  # "LLL_ONLY" ,"BKZ_ONLY", "SEQ_LLL_BKZ", ou "INDEP_LLL_BKZ"
-    scaling: int | None = None,
+    scaling: int | str | None = None,
     block_size: int = 30,
     delta: float = 0.99,
     eta: float = 0.51,
@@ -75,8 +90,10 @@ def solve_lattice_hybrid(
 
     # 1. Instance to knapsack matrix conversion
 
-    if scaling is None:
-        scaling = 2 ** n
+    #if scaling is None:
+    #    scaling = 2 ** n
+
+    scaling = _resolve_scaling(instance, scaling)
 
     B = instance.to_knapsack_matrix(M=scaling)
 

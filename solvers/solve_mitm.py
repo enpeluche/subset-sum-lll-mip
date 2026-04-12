@@ -63,6 +63,7 @@ def _mask_to_bits(mask: int, length: int) -> list[int]:
 def solve_mitm_classic(
     instance: SubsetSumInstance,
     max_subsets: int = 1 << 22,
+    workers: int = 6
 ) -> SolveResult:
     """
     Meet-in-the-Middle with Gray code enumeration.

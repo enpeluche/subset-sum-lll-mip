@@ -25,6 +25,10 @@ def solve_cpsat(instance: SubsetSumInstance, workers: int = 8, timeout: float = 
     # 0. Early exit: no subset can reach T if the total sum is insufficient.
     if instance.is_trivially_infeasible:
         return SolveResult.trivially_infeasible(time.perf_counter() - start)
+    
+    # 0.1 Early exit if instance cannot be computed with cp sat solver.
+    if not instance.fits_int64:
+        return SolveResult.skipped("CPSAT_Overflow_Skip")
 
     # 1. Model initialization
 

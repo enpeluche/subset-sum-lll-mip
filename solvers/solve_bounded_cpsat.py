@@ -25,6 +25,10 @@ def solve_bounded_cpsat(
     if instance.is_trivially_infeasible:
         return SolveResult.trivially_infeasible(time.perf_counter() - start)
     
+    # 0.1 Early exit if instance cannot be computed with cp sat solver.
+    if not instance.fits_int64:
+        return SolveResult.skipped("CPSAT_Overflow_Skip")
+    
     # 1. Model initialization
 
     model  = cp_model.CpModel()

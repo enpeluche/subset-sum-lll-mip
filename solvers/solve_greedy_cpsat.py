@@ -16,6 +16,15 @@ def solve_cpsat_greedy_bound(
     """CP-SAT with greedy bounds [k_lo, k_hi] (tolerance=extra slack)."""
 
     start = time.perf_counter()
+
+    # 0. Early exit: no subset can reach T if the total sum is insufficient.
+    if instance.is_trivially_infeasible:
+        return SolveResult.trivially_infeasible(time.perf_counter() - start)
+    
+    # 0.1 Early exit if instance cannot be computed with cp sat solver.
+    if not instance.fits_int64:
+        return SolveResult.skipped("CPSAT_Overflow_Skip")
+    
     k_lo, k_hi = compute_greedy_bounds(instance)
     
     n = instance.n
@@ -43,6 +52,15 @@ def solve_cpsat_smart_window(
     Covers k* in ~97% of cases with tol=3.
     """
     start = time.perf_counter()
+
+    # 0. Early exit: no subset can reach T if the total sum is insufficient.
+    if instance.is_trivially_infeasible:
+        return SolveResult.trivially_infeasible(time.perf_counter() - start)
+    
+    # 0.1 Early exit if instance cannot be computed with cp sat solver.
+    if not instance.fits_int64:
+        return SolveResult.skipped("CPSAT_Overflow_Skip")
+    
     k_lo_s, k_hi_s = compute_smart_window(instance, tolerance)
 
     result= solve_bounded_cpsat(instance, k_lo_s, k_hi_s, timeout=timeout, workers=workers)
@@ -77,6 +95,14 @@ def solve_cpsat_smart_tightened(
     giving CP-SAT a head start.
     """
     start = time.perf_counter()
+
+    # 0. Early exit: no subset can reach T if the total sum is insufficient.
+    if instance.is_trivially_infeasible:
+        return SolveResult.trivially_infeasible(time.perf_counter() - start)
+    
+    # 0.1 Early exit if instance cannot be computed with cp sat solver.
+    if not instance.fits_int64:
+        return SolveResult.skipped("CPSAT_Overflow_Skip")
 
     k_lo_s, k_hi_s = compute_smart_window(instance, tolerance)
     fixed_zeros, fixed_ones = bound_tightening(instance, k_lo_s, k_hi_s)
