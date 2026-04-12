@@ -4,11 +4,46 @@ run_strategies_match.py — Subset Sum Lattice Benchmark
 
 Make sure to always use same --nn and --densities parameters --timeout
 
-python -m benchmarks.run_strategies_match --n 2:50:1 --runs 50  --timeout 5 --densities 0.1:5:0.05 --blocks 10,20,30 --suite block --gen crypto_big --out bkz_study
-python -m benchmarks.run_strategies_match --n 2:50:1 --runs 50  --timeout 5 --densities 0.1:5:0.05 --deltas 0.5,0.75,0.99 --suite delta --gen crypto_big --out lll_study_0
-python -m benchmarks.run_strategies_match --n 2:50:1 --runs 50  --timeout 5 --densities 0.1:5:0.05 --deltas 0.99,0.995,0.999 --suite delta --gen crypto_big --out lll_study_1
-python -m benchmarks.run_strategies_match --n 2:50:1 --runs 50 --timeout 5 --densities 0.1:5:0.05 --deltas 0.99 --blocks 20 --suite hybrid_comp --gen crypto_big --out hybrid_lll_bkz_inter_seq_study
-python -m benchmarks.run_strategies_match --n 2:50:2 --runs 20 --timeout 5 --densities 0.1:5:0.1 --deltas 0.99 --blocks 20 --suite arch --gen crypto_big --out architecture_comparison
+fait le 11 avril
+python -m benchmarks.run_strategies_match \
+      --n 2:50:1 --runs 50  --timeout 5 --densities 0.1:5:0.05 --blocks 10,20,30 --suite block --gen crypto_big --out bkz_study
+
+fait
+python -m benchmarks.run_strategies_match \
+    --n 2:50:1 --runs 50  --timeout 5 --densities 0.1:5:0.05 --deltas 0.5,0.75,0.99 --suite delta --gen crypto_big --out lll_study_0
+
+fait
+python -m benchmarks.run_strategies_match \
+    --n 2:50:1 --runs 50  --timeout 5 --densities 0.1:5:0.05 --deltas 0.99,0.995,0.999 --suite delta --gen crypto_big --out lll_study_1
+
+en cours
+python -m benchmarks.run_strategies_match \
+    --n 2:50:1 --runs 50 --timeout 5 --densities 0.1:5:0.05 --deltas 0.99 --blocks 20 --suite hybrid_comp --gen crypto_big --out hybrid_lll_bkz_inter_seq_study
+
+fait sur premeir pc
+python -m benchmarks.run_strategies_match \
+    --n 2:50:2 --runs 20 --timeout 5 --densities 0.1:5:0.1 --deltas 0.99 --blocks 20 --suite arch --gen crypto_big --out architecture_comparison
+
+
+    fait
+python -m benchmarks.run_strategies_match \
+  --n 2:50:2 --densities 0.1:5:0.1 --runs 10 --timeout 10 \
+  --suite scaling --gen crypto_big --out scaling_study
+    
+  
+en cours
+# --- Tabu : 3 engines × 2 warm starts ---
+python -m benchmarks.run_strategies_match \
+  --n 2:50:2 --densities 0.1:5:0.1 --runs 10 --timeout 10 \
+  --suite tabu_comp --gen crypto_big --out tabu_comparison
+
+# --- Exact : MITM vs CP-SAT vs Greedy ---
+# n plus petit (MITM explose à 2^(n/2), au-delà de 44 il skip)
+python -m benchmarks.run_strategies_match \
+  --n 2:44:2 --densities 0.1:5:0.1 --runs 10 --timeout 10 \
+  --suite exact_comp --gen crypto_big --out exact_comparison
+
+
 
 
 # --- CP-SAT : comparaison des 6 variantes ---
@@ -36,6 +71,12 @@ python -m benchmarks.run_strategies_match \
 python -m benchmarks.run_strategies_match \
   --n 2:50:2 --densities 0.1:5:0.1 --runs 10 --timeout 10 \
   --deltas 0.99 --blocks 20 --suite arch --gen crypto_big --out architecture_comparison
+
+
+
+python -m benchmarks.run_strategies_match \
+  --n 2:50:2 --densities 0.1:5:0.1 --runs 10 --timeout 10 \
+  --suite gray_landscape --gen crypto_big --out gray_landscape_stud
 """
 
 import os
@@ -89,6 +130,7 @@ def main():
         timeout=args.timeout,
         generator=GENERATORS[args.gen],
         ranges=instance_ranges,
+        workers=max(1, (os.cpu_count() or 6) // 2)  # cores physiques
     )
 
     # --- Plot ---

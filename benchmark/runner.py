@@ -45,7 +45,7 @@ def _safe_call(func, **kwargs):
 # Public API
 # ---------------------------------------------------------------------------
 
-def run_benchmark(runs, solvers, json_file, timeout, generator, ranges: dict):
+def run_benchmark(runs, solvers, json_file, timeout, generator, ranges: dict, workers: int):
     """Run all solvers over a parameter grid and persist results."""
     keys = list(ranges.keys())
     combos = list(itertools.product(*ranges.values()))
@@ -87,7 +87,9 @@ def run_benchmark(runs, solvers, json_file, timeout, generator, ranges: dict):
 
             for name, solver in solvers.items():
                 _progress_bar(done, total, t_start, cfg, display_axes, COL_W)
-                res = solver(instance)
+
+                res = _safe_call(solver, instance=instance, workers=workers)# <---------------------------------- solver here
+
                 tmp[name] = res
         
                 if res.solution is not None:
