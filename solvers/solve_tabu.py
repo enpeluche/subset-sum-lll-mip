@@ -83,7 +83,7 @@ def _tabu_classic(
     x_init: list[int],
     n_iter: int,
     tenure: int,
-    deadline: float,
+    deadline: float
 ) -> tuple[list[int] | None, int, int]:
     """
     Standard tabu: evaluate all n flips, pick best non-tabu (or aspiration).
@@ -137,6 +137,44 @@ def _tabu_classic(
     return (best_x if best_res == 0 else None), branches, best_res
 
 
+def _gray_walk(instance: SubsetSumInstance,
+    x_init: list[int],
+    n_iter: int,
+    tenure: int,
+    deadline: float,):
+    """True Hamiltonian walk on {0,1}^n. Exact for n_iter >= 2^n."""
+    n = instance.n
+    w = instance.weights
+
+    x = x_init.copy()
+    residual = instance.residual(x)
+    best_x, best_res = x.copy(), abs(residual)
+    branches = 0
+
+    limit = min(n_iter, (1 << n) - 1)  # 2^n - 1 flips = full cycle
+
+    for it in range(1, limit + 1):
+        if time.perf_counter() > deadline:
+            break
+
+        j = _gray_bit(it)
+        if j >= n:
+            break
+
+        branches += 1
+        delta = w[j] if x[j] == 0 else -w[j]
+        x[j] = 1 - x[j]
+        residual += delta
+
+        if abs(residual) < best_res:
+            best_res = abs(residual)
+            best_x = x.copy()
+
+        if residual == 0:
+            return x, branches, 0
+
+    return (best_x if best_res == 0 else None), branches, best_res
+
 # =====================================================================
 # Gray Tabu Search — O(1) per iteration
 # =====================================================================
@@ -151,7 +189,7 @@ def _tabu_gray(
     x_init: list[int],
     n_iter: int,
     tenure: int,
-    deadline: float,
+    deadline: float
 ) -> tuple[list[int] | None, int, int]:
     """
     Gray code tabu: flip bits in Gray code order.
@@ -284,6 +322,7 @@ TABU_ENGINES = {
     "classic": _tabu_classic,
     "gray":    _tabu_gray,
     "beckett": _tabu_beckett,
+    "gray_walk": _gray_walk,
 }
 
 
@@ -300,6 +339,7 @@ def solve_tabu(
     tenure: int | None = None,
     n_restarts: int = 5,
     timeout: float = 10.0,
+    workers: int = 6
 ) -> SolveResult:
     """
     Tabu search with restarts.
