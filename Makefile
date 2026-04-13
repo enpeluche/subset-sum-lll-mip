@@ -38,7 +38,7 @@ lattice_scaling_study:
 lattice_arch:
 	$(BASE) --suite lattice_arch --out lattice/arch_comparison
 
-lattice_bkz_adaptative;
+lattice_bkz_adaptative:
 	$(BASE) --suite lattice_bkz_adaptative --out lattice/bkz_adaptative
 
 all_lattice: lll_study bkz_study lattice_seq_indep lattice_scaling lattice_arch
