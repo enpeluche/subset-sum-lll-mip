@@ -68,12 +68,14 @@ def solve_lattice_hybrid(
     workers: int = 8,
     timeout: float = 100.0
 ) -> SolveResult:
-    
+    # Suppresion de INDEP_LLL_BKZ
     # Fusion probable de indep et seq au profit de la plus rapide
     # profit de adaptive bkz si il se démarque
 
     start = time.perf_counter()
     n = instance.n
+
+    best_res, best_ham = None, None
 
     # 0. Early exit
     if instance.is_trivially_infeasible:
@@ -83,23 +85,18 @@ def solve_lattice_hybrid(
     scaling_val = _resolve_scaling(instance, scaling)
     B = instance.to_knapsack_matrix(M=scaling_val)
 
-    # 2. Logique de réduction Adaptative / Clamp
-    # On définit la force du BKZ : n si n < 30, sinon 30 (ou block_size configuré)
-    actual_beta = max(2, min(n, block_size))
-
     # --- PHASE LLL ---
-    if strategy in ["LLL_ONLY", "SEQ_LLL_BKZ", "INDEP_LLL_BKZ"]:
+    if strategy in ["LLL_ONLY", "SEQ_LLL_BKZ"]:
         LLL.reduction(B, delta=delta, eta=eta)
         res, best_res, best_ham = _evaluate_basis(instance, B, start, f"{strategy}_LLL")
         if res: return res
 
     # --- PHASE BKZ ---
-    # Pour INDEP, on repart d'une matrice fraîche (non réduite par LLL)
-    if strategy == "INDEP_LLL_BKZ":
-        B = instance.to_knapsack_matrix(M=scaling_val)
 
-    if strategy in ["BKZ_ONLY", "SEQ_LLL_BKZ", "INDEP_LLL_BKZ", "ADAPTATIVE_BKZ"]:
-        params = BKZ.Param(block_size=actual_beta)
+    if strategy in ["BKZ_ONLY", "SEQ_LLL_BKZ", "ADAPTATIVE_BKZ"]:
+        params = BKZ.Param(block_size=block_size)
+        if strategy == "ADAPTATIVE_BKZ":
+            params = BKZ.Param(block_size= max(2, min(n, block_size)))
         BKZ.reduction(B, params)
         res, best_res, best_ham = _evaluate_basis(instance, B, start, f"{strategy}_BKZ")
         if res: return res
@@ -108,7 +105,7 @@ def solve_lattice_hybrid(
     elapsed = time.perf_counter() - start
     remaining = timeout - elapsed
     remaining = 0
-    # On ne lance CP-SAT que s'il reste un budget temps significatif (ex: > 100ms)
+
     if remaining > 0.1:
         fallback_result = solve_cpsat(instance, workers=workers, timeout=remaining)
         status_label = "Success" if fallback_result.solution else "Timeout"
@@ -124,5 +121,4 @@ def solve_lattice_hybrid(
             best_ham=best_ham, #type: ignore
         )
 
-    # Sinon, on rend les armes proprement
     return SolveResult.timeout(elapsed, label=f"{strategy}_Final_Timeout", res=best_res, ham=best_ham) #type: ignore

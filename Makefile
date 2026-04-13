@@ -29,11 +29,11 @@ lll_study:
 bkz_study:
 	$(BASE) --suite lattice_block --blocks 10,20,30 --out lattice/bkz_study
 
-lattice_seq_indep_lll_bkz:
-	$(BASE) --suite lattice_hybrid_comp --out lattice/hybrid_comparison
+lattice_scaling_study_lll:
+	$(BASE) --suite lattice_scaling_lll --out lattice/lll_scaling_study
 
-lattice_scaling_study:
-	$(BASE) --suite lattice_scaling --out lattice/bkz_scaling_study
+lattice_scaling_study_bkz:
+	$(BASE) --suite lattice_scaling_bkz --out lattice/bkz_scaling_study
 
 lattice_arch:
 	$(BASE) --suite lattice_arch --out lattice/arch_comparison

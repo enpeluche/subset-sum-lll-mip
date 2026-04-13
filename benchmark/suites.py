@@ -41,8 +41,8 @@ def build_solvers(ranges: dict, suite: str, timeout: float) -> dict:
         "lattice_block":     _suite_lattice_block,
         "lattice_arch":      _suite_lattice_arch,
         "lattice_bkz_adaptative": _suite_lattice_bkz_adaptative,
-        "lattice_hybrid_comp": _suite_lattice_hybrid_comp,
-        "lattice_scaling": _suite_lattice_scaling,
+        "lattice_scaling_bkz": _suite_lattice_scaling_bkz,
+        "lattice_scaling_lll": _suite_lattice_scaling_lll,
         "tabu_comp":   _suite_tabu_comp,
         "exact_comp":  _suite_exact_comp,
         "cpsat_comp":  _suite_cpsat_comp,
@@ -84,7 +84,7 @@ def _suite_lattice_bkz_adaptative(deltas, blocks, base_delta, base_block, timeou
     for b in blocks:
         suite[f"BKZ-{int(b)}"] = partial(
             solve_lattice_hybrid, 
-            strategy="SEQ_LLL_BKZ", 
+            strategy="BKZ_ONLY", 
             block_size=int(b), 
             timeout=timeout
         )
@@ -92,7 +92,26 @@ def _suite_lattice_bkz_adaptative(deltas, blocks, base_delta, base_block, timeou
     return suite
 
 
-def _suite_lattice_scaling(deltas, blocks, base_delta, base_block, timeout) -> Dict[str, Callable]:
+def _suite_lattice_scaling_lll(deltas, blocks, base_delta, base_block, timeout) -> Dict[str, Callable]:
+    """Génère les stratégies de scaling dynamiquement pour LLL ET BKZ."""
+    scalings = {
+        "2^n": "2n",
+        "sqrt(n)": "sqrt_n",
+        "n": "n",
+        "sum(w)": "sum_w",
+        "2^(n_div_2)": "2n2"
+    }
+    
+    suite = {}
+    for label, scale_val in scalings.items():
+       
+        # Version BKZ
+        suite[f"LLL (M={label})"] = partial(
+            solve_lattice_hybrid, strategy="LLL_ONLY", scaling=scale_val, block_size=base_block, timeout=timeout
+        )
+    return suite
+
+def _suite_lattice_scaling_bkz(deltas, blocks, base_delta, base_block, timeout) -> Dict[str, Callable]:
     """Génère les stratégies de scaling dynamiquement pour LLL ET BKZ."""
     scalings = {
         "2^n": "2n",
@@ -111,7 +130,6 @@ def _suite_lattice_scaling(deltas, blocks, base_delta, base_block, timeout) -> D
         )
     return suite
 
-
 def _suite_lattice_arch(deltas, blocks, base_delta, base_block, timeout) -> Dict[str, Callable]:
     """Compare toutes les architectures avec les paramètres par défaut."""
     kw = dict(delta=base_delta, block_size=base_block, timeout=timeout)
@@ -119,17 +137,10 @@ def _suite_lattice_arch(deltas, blocks, base_delta, base_block, timeout) -> Dict
         "LLL":            partial(solve_lattice_hybrid, strategy="LLL_ONLY", **kw),
         "BKZ":            partial(solve_lattice_hybrid, strategy="BKZ_ONLY", **kw),
         "SEQ (LLL->BKZ)": partial(solve_lattice_hybrid, strategy="SEQ_LLL_BKZ", **kw),
-        "INDEP":          partial(solve_lattice_hybrid, strategy="INDEP_LLL_BKZ", **kw),
     }
 
 
-def _suite_lattice_hybrid_comp(deltas, blocks, base_delta, base_block, timeout) -> Dict[str, Callable]:
-    """Focus strict sur la comparaison des deux architectures hybrides."""
-    kw = dict(delta=base_delta, block_size=base_block, timeout=timeout)
-    return {
-        "SEQ_LLL_BKZ":   partial(solve_lattice_hybrid, strategy="SEQ_LLL_BKZ", **kw),
-        "INDEP_LLL_BKZ": partial(solve_lattice_hybrid, strategy="INDEP_LLL_BKZ", **kw),
-    }
+
 # ------------------------------------------------------------------
 # CP-SAT suites
 # ------------------------------------------------------------------
