@@ -60,93 +60,69 @@ def _resolve_scaling(instance, scaling):
 
 def solve_lattice_hybrid(
     instance: SubsetSumInstance,
-    strategy: str = "SEQ_LLL_BKZ",  # "LLL_ONLY" ,"BKZ_ONLY", "SEQ_LLL_BKZ", ou "INDEP_LLL_BKZ"
+    strategy: str = "SEQ_LLL_BKZ", 
     scaling: int | str | None = None,
-    block_size: int = 30,
+    block_size: int = 30, # Sera utilisé comme plafond (max)
     delta: float = 0.99,
     eta: float = 0.51,
     workers: int = 8,
     timeout: float = 100.0
 ) -> SolveResult:
-    """
-    Hybrid Subset Sum solver combining LLL lattice reduction with CP-SAT fallback.
+    
+    # Fusion probable de indep et seq au profit de la plus rapide
+    # profit de adaptive bkz si il se démarque
 
-    Strategy:
-        1. Trivial Check: Early exit if the target is mathematically unreachable.
-        2. Lattice Reduction: Build a knapsack matrix and apply LLL.
-        3. Direct Verification: Extract and sort candidates by norm. If a binary 
-           vector solves the instance exactly, return it immediately.
-        4. Fallback: If no direct solution is found, use the remaining time budget
-           to run a full CP-SAT search.
-    """
     start = time.perf_counter()
     n = instance.n
-    best_residual = 0
-    best_hamming = 0
 
-    # 0. Early exit: no subset can reach T if the total sum is insufficient.
+    # 0. Early exit
     if instance.is_trivially_infeasible:
         return SolveResult.trivially_infeasible(time.perf_counter() - start)
 
-    # 1. Instance to knapsack matrix conversion
+    # 1. Scaling et Préparation de la matrice
+    scaling_val = _resolve_scaling(instance, scaling)
+    B = instance.to_knapsack_matrix(M=scaling_val)
 
-    #if scaling is None:
-    #    scaling = 2 ** n
+    # 2. Logique de réduction Adaptative / Clamp
+    # On définit la force du BKZ : n si n < 30, sinon 30 (ou block_size configuré)
+    actual_beta = max(2, min(n, block_size))
 
-    scaling = _resolve_scaling(instance, scaling)
-
-    B = instance.to_knapsack_matrix(M=scaling)
-
+    # --- PHASE LLL ---
     if strategy in ["LLL_ONLY", "SEQ_LLL_BKZ", "INDEP_LLL_BKZ"]:
         LLL.reduction(B, delta=delta, eta=eta)
+        res, best_res, best_ham = _evaluate_basis(instance, B, start, f"{strategy}_LLL")
+        if res: return res
 
-        result, best_residual, best_hamming = _evaluate_basis(instance, B, start, f"{strategy}")
-        if result: 
-            return result
+    # --- PHASE BKZ ---
+    # Pour INDEP, on repart d'une matrice fraîche (non réduite par LLL)
+    if strategy == "INDEP_LLL_BKZ":
+        B = instance.to_knapsack_matrix(M=scaling_val)
 
-    if strategy in ["BKZ_ONLY", "SEQ_LLL_BKZ"]:
-        params = BKZ.Param(block_size=block_size)
+    if strategy in ["BKZ_ONLY", "SEQ_LLL_BKZ", "INDEP_LLL_BKZ", "ADAPTATIVE_BKZ"]:
+        params = BKZ.Param(block_size=actual_beta)
         BKZ.reduction(B, params)
+        res, best_res, best_ham = _evaluate_basis(instance, B, start, f"{strategy}_BKZ")
+        if res: return res
 
-        result, best_residual, best_hamming = _evaluate_basis(instance, B, start, f"{strategy}")
-        if result: 
-            return result
-    
-    if strategy in ["INDEP_LLL_BKZ"]:
-        B = instance.to_knapsack_matrix(M=scaling)
-        params = BKZ.Param(block_size=block_size)
-        BKZ.reduction(B, params)
-
-        result, best_residual, best_hamming = _evaluate_basis(instance, B, start, f"{strategy}")
-        if result: 
-            return result
-
-    # 3. We check if there is remaining time
-
+    # --- PHASE FALLBACK (CP-SAT) ---
     elapsed = time.perf_counter() - start
     remaining = timeout - elapsed
-
     remaining = 0
-
-    if remaining <= 0:
-        return SolveResult.timeout(
-            elapsed, 
-            label=f"Timeout_During_{strategy}", 
-            res=best_residual, 
-            ham=best_hamming
+    # On ne lance CP-SAT que s'il reste un budget temps significatif (ex: > 100ms)
+    if remaining > 0.1:
+        fallback_result = solve_cpsat(instance, workers=workers, timeout=remaining)
+        status_label = "Success" if fallback_result.solution else "Timeout"
+        
+        return SolveResult(
+            elapsed=time.perf_counter() - start,
+            branches=fallback_result.branches,
+            conflicts=fallback_result.conflicts,
+            status=fallback_result.status,
+            solution=fallback_result.solution,
+            label=f"{strategy}_Fallback_{status_label}",
+            best_res=best_res, #type: ignore
+            best_ham=best_ham, #type: ignore
         )
 
-    # 4. We start a vanilla cp sat fallback
-    fallback_result = solve_cpsat(instance, workers=workers, timeout=remaining)
-    final_label = f"{strategy}_Fallback_Success" if fallback_result.solution else f"{strategy}_Fallback_Timeout"
-
-    return SolveResult(
-        elapsed=time.perf_counter() - start,
-        branches=fallback_result.branches,
-        conflicts=fallback_result.conflicts,
-        status=fallback_result.status,
-        solution=fallback_result.solution,
-        label=final_label,
-        best_res=best_residual,
-        best_ham=best_hamming,
-    )
+    # Sinon, on rend les armes proprement
+    return SolveResult.timeout(elapsed, label=f"{strategy}_Final_Timeout", res=best_res, ham=best_ham) #type: ignore
