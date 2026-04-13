@@ -1,6 +1,9 @@
 """Solver factory: builds a named dict of solvers for each experiment suite."""
 
 from functools import partial
+from typing import Dict, Callable, Any
+
+
 from solvers.solve_lattice_hybrid import solve_lattice_hybrid
 from solvers.solve_greedy_cpsat import (
     solve_cpsat_greedy_bound,
@@ -19,14 +22,14 @@ def build_solvers(ranges: dict, suite: str, timeout: float) -> dict:
     Return {name: partial(solve_lattice_hybrid, ...)} for the chosen suite.
 
     Suites:
-        delta      — one solver per delta value (LLL only)
-        block      — one solver per block_size (BKZ only)
-        arch       — LLL / BKZ / SEQ / INDEP head-to-head
-        hybrid_comp — SEQ vs INDEP focus
+        lattice_delta       — Evaluates LLL performance across different delta values
+        lattice_block       — Assesses BKZ performance by varying the block size
+        lattice_arch        — Compares standalone solvers (LLL/BKZ) vs. hybrid architectures
+        lattice_hybrid_comp — Strict head-to-head of Sequential vs. Independent hybrids
+        lattice_scaling     — Tests dynamic scaling strategies for LLL and BKZ
         tabu_comp   — tabu engines × warm starts
         exact_comp  — MITM vs CP-SAT vs Greedy Extreme
         cpsat_comp  — all CP-SAT variants (vanilla → full greedy)
-        mega_test  — cartesian product delta × block_size
     """
     deltas = ranges.get("delta", [0.99])
     blocks = ranges.get("block_size", [20])
@@ -34,14 +37,14 @@ def build_solvers(ranges: dict, suite: str, timeout: float) -> dict:
     base_block = int(blocks[0])
 
     builders = {
-        "delta":     _suite_delta,
-        "block":     _suite_block,
-        "arch":      _suite_arch,
-        "hybrid_comp": _suite_hybrid_comp,
+        "lattice_delta":     _suite_lattice_delta,
+        "lattice_block":     _suite_lattice_block,
+        "lattice_arch":      _suite_lattice_arch,
+        "lattice_hybrid_comp": _suite_lattice_hybrid_comp,
+        "lattice_scaling": _suite_lattice_scaling,
         "tabu_comp":   _suite_tabu_comp,
         "exact_comp":  _suite_exact_comp,
         "cpsat_comp":  _suite_cpsat_comp,
-        "scaling": _suite_scaling,
         "gray": _suite_gray_study,
         "gray_landscape": _suite_gray_landscape,
         "cpsat_formulation": _suite_cpsat_formulation,
@@ -49,32 +52,50 @@ def build_solvers(ranges: dict, suite: str, timeout: float) -> dict:
     return builders[suite](deltas, blocks, base_delta, base_block, timeout)
 
 
-# ------------------------------------------------------------------
 
-def _suite_delta(deltas, _blocks, _bd, _bb, timeout):
+
+
+def _suite_lattice_delta(deltas, blocks, base_delta, base_block, timeout) -> Dict[str, Callable]:
+    """Fait varier le paramètre delta pour LLL."""
     return {
         f"LLL-{d}": partial(solve_lattice_hybrid, strategy="LLL_ONLY", delta=d, timeout=timeout)
         for d in deltas
     }
 
-def _suite_scaling(_deltas, _blocks, _bd, _bb, timeout):
-    from solvers.solve_lattice_hybrid import solve_lattice_hybrid
-    return {
-        "M=2^n":        partial(solve_lattice_hybrid, strategy="LLL_ONLY", scaling="2n", timeout=timeout),
-        "M=sqrt(n)":    partial(solve_lattice_hybrid, strategy="LLL_ONLY", scaling="sqrt_n", timeout=timeout),
-        "M=n":          partial(solve_lattice_hybrid, strategy="LLL_ONLY", scaling="n", timeout=timeout),
-        "M=sum(w)":     partial(solve_lattice_hybrid, strategy="LLL_ONLY", scaling="sum_w", timeout=timeout),
-        "M=2^(n_div_2)":    partial(solve_lattice_hybrid, strategy="LLL_ONLY", scaling="2n2", timeout=timeout),
-    }
 
-def _suite_block(_deltas, blocks, _bd, _bb, timeout):
+def _suite_lattice_block(deltas, blocks, base_delta, base_block, timeout) -> Dict[str, Callable]:
+    """Fait varier la taille de bloc pour BKZ."""
     return {
         f"BKZ-{int(b)}": partial(solve_lattice_hybrid, strategy="BKZ_ONLY", block_size=int(b), timeout=timeout)
         for b in blocks
     }
 
 
-def _suite_arch(_deltas, _blocks, base_delta, base_block, timeout):
+def _suite_lattice_scaling(deltas, blocks, base_delta, base_block, timeout) -> Dict[str, Callable]:
+    """Génère les stratégies de scaling dynamiquement pour LLL ET BKZ."""
+    scalings = {
+        "2^n": "2n",
+        "sqrt(n)": "sqrt_n",
+        "n": "n",
+        "sum(w)": "sum_w",
+        "2^(n_div_2)": "2n2"
+    }
+    
+    suite = {}
+    for label, scale_val in scalings.items():
+        # Version LLL
+        suite[f"LLL (M={label})"] = partial(
+            solve_lattice_hybrid, strategy="LLL_ONLY", scaling=scale_val, delta=base_delta, timeout=timeout
+        )
+        # Version BKZ
+        suite[f"BKZ (M={label})"] = partial(
+            solve_lattice_hybrid, strategy="BKZ_ONLY", scaling=scale_val, block_size=base_block, timeout=timeout
+        )
+    return suite
+
+
+def _suite_lattice_arch(deltas, blocks, base_delta, base_block, timeout) -> Dict[str, Callable]:
+    """Compare toutes les architectures avec les paramètres par défaut."""
     kw = dict(delta=base_delta, block_size=base_block, timeout=timeout)
     return {
         "LLL":            partial(solve_lattice_hybrid, strategy="LLL_ONLY", **kw),
@@ -84,14 +105,13 @@ def _suite_arch(_deltas, _blocks, base_delta, base_block, timeout):
     }
 
 
-def _suite_hybrid_comp(_deltas, _blocks, base_delta, base_block, timeout):
+def _suite_lattice_hybrid_comp(deltas, blocks, base_delta, base_block, timeout) -> Dict[str, Callable]:
     """Focus strict sur la comparaison des deux architectures hybrides."""
     kw = dict(delta=base_delta, block_size=base_block, timeout=timeout)
     return {
         "SEQ_LLL_BKZ":   partial(solve_lattice_hybrid, strategy="SEQ_LLL_BKZ", **kw),
         "INDEP_LLL_BKZ": partial(solve_lattice_hybrid, strategy="INDEP_LLL_BKZ", **kw),
     }
-
 # ------------------------------------------------------------------
 # CP-SAT suites
 # ------------------------------------------------------------------
