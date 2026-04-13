@@ -49,7 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
                                                      "cpsat_comp",
                                                      "lattice_scaling",
                                                      "gray",
-                                                     "gray_landscape"])
+                                                     "gray_landscape",
+                                                     "lattice_bkz_adaptative"])
     p.add_argument("--runs",    type=int,   default=10)
     p.add_argument("--timeout", type=float, default=5.0)
     p.add_argument("--gen",     type=str,   choices=["uniform", "super_inc", "crypto", "crypto_big"], default="crypto")

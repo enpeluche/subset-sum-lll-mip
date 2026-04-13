@@ -40,6 +40,7 @@ def build_solvers(ranges: dict, suite: str, timeout: float) -> dict:
         "lattice_delta":     _suite_lattice_delta,
         "lattice_block":     _suite_lattice_block,
         "lattice_arch":      _suite_lattice_arch,
+        "lattice_bkz_adaptative": _suite_lattice_bkz_adaptative,
         "lattice_hybrid_comp": _suite_lattice_hybrid_comp,
         "lattice_scaling": _suite_lattice_scaling,
         "tabu_comp":   _suite_tabu_comp,
@@ -70,6 +71,26 @@ def _suite_lattice_block(deltas, blocks, base_delta, base_block, timeout) -> Dic
         for b in blocks
     }
 
+def _suite_lattice_bkz_adaptative(deltas, blocks, base_delta, base_block, timeout) -> Dict[str, Callable]:
+    suite = {
+        "BKZ-Adaptative": partial(
+            solve_lattice_hybrid, 
+            strategy="ADAPTATIVE_BKZ", 
+            block_size=30, 
+            timeout=timeout
+        )
+    }
+
+    for b in blocks:
+        suite[f"BKZ-{int(b)}"] = partial(
+            solve_lattice_hybrid, 
+            strategy="SEQ_LLL_BKZ", 
+            block_size=int(b), 
+            timeout=timeout
+        )
+
+    return suite
+
 
 def _suite_lattice_scaling(deltas, blocks, base_delta, base_block, timeout) -> Dict[str, Callable]:
     """Génère les stratégies de scaling dynamiquement pour LLL ET BKZ."""
@@ -83,10 +104,7 @@ def _suite_lattice_scaling(deltas, blocks, base_delta, base_block, timeout) -> D
     
     suite = {}
     for label, scale_val in scalings.items():
-        # Version LLL
-        suite[f"LLL (M={label})"] = partial(
-            solve_lattice_hybrid, strategy="LLL_ONLY", scaling=scale_val, delta=base_delta, timeout=timeout
-        )
+       
         # Version BKZ
         suite[f"BKZ (M={label})"] = partial(
             solve_lattice_hybrid, strategy="BKZ_ONLY", scaling=scale_val, block_size=base_block, timeout=timeout

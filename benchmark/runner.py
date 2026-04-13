@@ -228,17 +228,36 @@ def _freeze_row(cfg, axes, succ, times, names, n_runs):
                 [succ[ref], n_runs - succ[ref]],
                 [succ[name], n_runs - succ[name]],
             ])
-            if p < 0.05: #type: ignore
-                sr_sym = "+" if succ[name] > succ[ref] else "-"
+            if p < 0.001: #type: ignore
+                sr_sym = ">>>" if succ[name] > succ[ref] else "<<<"
                 sr_col = _C.GRN if succ[name] > succ[ref] else _C.RED
+            elif p < 0.01: #type: ignore
+                sr_sym = ">>" if succ[name] > succ[ref] else "<<"
+                sr_col = _C.GRN if succ[name] > succ[ref] else _C.RED
+            elif p < 0.05: #type: ignore
+                sr_sym = ">" if succ[name] > succ[ref] else "<"
+                sr_col = _C.GRN if succ[name] > succ[ref] else _C.RED
+            elif p < 0.15: #type: ignore
+                sr_sym = ">=" if succ[name] > succ[ref] else "<="
+                sr_col = _C.GRN if succ[name] > succ[ref] else _C.RED
+            
 
         t_sym, t_col = " ", _C.GRY
         if not is_ref and t_ref and t_cur:
             try:
                 if t_ref != t_cur:
                     res = mannwhitneyu(t_ref, t_cur)
-                    if res.pvalue < 0.05:
+                    if res.pvalue < 0.001:
+                        t_sym = ">>>" if avg < avg_ref else "<<<"
+                        t_col = _C.GRN if avg < avg_ref else _C.RED
+                    elif res.pvalue < 0.01:
+                        t_sym = ">>" if avg < avg_ref else "<<"
+                        t_col = _C.GRN if avg < avg_ref else _C.RED
+                    elif  res.pvalue < 0.05:
                         t_sym = ">" if avg < avg_ref else "<"
+                        t_col = _C.GRN if avg < avg_ref else _C.RED
+                    elif  res.pvalue < 0.05:
+                        t_sym = ">=" if avg < avg_ref else "<="
                         t_col = _C.GRN if avg < avg_ref else _C.RED
             except Exception:
                 pass
