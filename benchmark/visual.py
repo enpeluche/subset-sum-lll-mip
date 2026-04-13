@@ -1,216 +1,271 @@
-"""Visualization: success rates, heatmaps, diffs, performance, LLL geometry."""
+"""Visualization: heatmap mosaics for success, time, speedup, and diffs."""
 
+import copy
+import math
 import os
 
-import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
 
-from .io import RunRecord, records_to_df
+from .io import AggRecord, RunRecord, agg_records_to_df
 from .style import get_style
 
 
-# ===================================================================
-# Success-rate line plot
-# ===================================================================
+# =====================================================================
+# Helpers
+# =====================================================================
 
-def plot_success_rates(records: list[RunRecord], output_path="results/success_plot.png"):
-    df = records_to_df(records)
+def _make_grid(n_panels: int, max_cols: int = 3, panel_size: tuple = (8, 6)):
+    """Create a figure with a grid of subplots, return (fig, axes_list)."""
+    cols = min(max_cols, n_panels)
+    rows = math.ceil(n_panels / cols)
+    fig, raw_axes = plt.subplots(rows, cols, figsize=(cols * panel_size[0], rows * panel_size[1]))
+
+    if isinstance(raw_axes, np.ndarray):
+        axes_list = raw_axes.flatten().tolist()
+    else:
+        axes_list = [raw_axes]
+
+    return fig, axes_list
+
+
+def _cleanup_and_save(fig, axes_list, n_used: int, cmap, norm, cbar_label: str, output_path: str):
+    """Hide unused axes, add global colorbar, save figure."""
+    for j in range(n_used, len(axes_list)):
+        axes_list[j].axis("off")
+
+    fig.tight_layout(rect=(0, 0, 0.9, 1))
+
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cax = fig.add_axes((0.92, 0.15, 0.02, 0.7))
+    fig.colorbar(sm, cax=cax, label=cbar_label)
+
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  > [OK] {output_path}")
+
+
+def _prepare_df(agg_records: list[AggRecord]) -> pd.DataFrame:
+    """Convert to DataFrame with rounded density."""
+    df = agg_records_to_df(agg_records)
+    df["density"] = df["density"].round(2)
+    return df
+
+
+def _tick_skip(pivot, axis: str = "both") -> dict:
+    """Compute yticklabels/xticklabels skip for readability."""
+    kw = {}
+    if axis in ("both", "y"):
+        kw["yticklabels"] = max(1, len(pivot) // 8)
+    if axis in ("both", "x"):
+        kw["xticklabels"] = max(1, len(pivot.columns) // 6)
+    return kw
+
+
+# =====================================================================
+# 1D plot (when only one axis varies)
+# =====================================================================
+
+def plot_success_rates(agg_records: list[AggRecord], output_path="results/success_plot.png"):
+    """Line plot of success rate vs n (for single-density sweeps)."""
+    df = agg_records_to_df(agg_records)
     plt.figure(figsize=(10, 6))
     sns.lineplot(data=df, x="n", y="success", hue="solver", marker="o")
-    plt.title("Évolution de la robustesse en fonction de n")
-    plt.ylabel("Taux de Succès")
-    plt.ylim(-0.05, 1.05)
+    plt.title("Taux de succès en fonction de n")
+    plt.ylabel("Taux de Succès (%)")
+    plt.ylim(-5, 105)
     plt.grid(True, alpha=0.3)
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"Graphique sauvegardé : {output_path}")
+    print(f"  > [OK] {output_path}")
 
 
-# ===================================================================
-# Heatmaps
-# ===================================================================
+# =====================================================================
+# Success rate heatmaps
+# =====================================================================
 
-def plot_all_heatmaps(records: list[RunRecord], output_dir="results"):
-    df = records_to_df(records)
-    df["density"] = df["density"].round(2)
+def generate_success_mosaic(agg_records: list[AggRecord], output_dir="results"):
+    """One heatmap per solver: absolute success rate (0-100%)."""
+    os.makedirs(output_dir, exist_ok=True)
+    df = _prepare_df(agg_records)
     solvers = df["solver"].unique()
-    print(f"Génération de {len(solvers)} heatmaps...")
+    n_solvers = len(solvers)
+    if n_solvers == 0:
+        return
 
-    for name in solvers:
-        safe = name.replace(" ", "_").replace("(", "").replace(")", "")
-        path = f"{output_dir}/heatmap_{safe}.png"
-        subset = df[df["solver"] == name]
-        pivot = subset.groupby(["n", "density"])["success"].mean().unstack() * 100
+    fig, axes = _make_grid(n_solvers)
+    cmap = copy.copy(plt.get_cmap("RdYlGn"))
+    cmap.set_bad(color="#333333")
 
-        plt.figure(figsize=(10, 8))
+    print(f"\n--- Mosaic: Success Rates ---")
+    for i, name in enumerate(solvers):
+        pivot = df[df["solver"] == name].groupby(["n", "density"])["success"].mean().unstack()
         sns.heatmap(
-            pivot, linewidths=0, annot=False, cmap="RdYlGn",
-            vmin=0, vmax=100,
-            yticklabels=max(1, len(pivot) // 8),
-            xticklabels=max(1, len(pivot.columns) // 6),
-            cbar_kws={"label": "Taux de Succès (%)"},
+            pivot, annot=False, linewidths=0, cmap=cmap,
+            vmin=0, vmax=100, cbar=False, ax=axes[i],
+            **_tick_skip(pivot),
         )
-        plt.title(f"Transition de Phase : {name}", pad=15)
-        plt.xlabel("Densité $d$")
-        plt.ylabel("Dimension $n$")
-        plt.xticks(rotation=45)
-        plt.savefig(path, dpi=300, bbox_inches="tight")
-        plt.close()
-        print(f"  > [OK] {path}")
+        axes[i].set_title(name, pad=15, fontsize=13, fontweight="bold")
+        axes[i].set_xlabel("Densité $d$")
+        axes[i].set_ylabel("Dimension $n$")
+        axes[i].tick_params(axis="x", rotation=45)
 
-
-def plot_heatmap_diff(
-    records: list[RunRecord],
-    solver_base: str,
-    solver_amelio: str,
-    output_path="results/heatmap_diff.png",
-):
-    df = records_to_df(records)
-    df["density"] = df["density"].round(2)
-
-    pivot_b = df[df["solver"] == solver_base].groupby(["n", "density"])["success"].mean().unstack() * 100
-    pivot_a = df[df["solver"] == solver_amelio].groupby(["n", "density"])["success"].mean().unstack() * 100
-    diff = pivot_a.sub(pivot_b, fill_value=0)
-
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(
-        diff, annot=False, cmap="RdBu", center=0, vmin=-100, vmax=100,
-        linewidths=0,
-        yticklabels=max(1, len(diff) // 8),
-        xticklabels=max(1, len(diff.columns) // 6),
-        cbar_kws={"label": "Gain de Succès (%)"},
+    _cleanup_and_save(
+        fig, axes, n_solvers, cmap,
+        mcolors.Normalize(vmin=0, vmax=100),
+        "Taux de Succès (%)",
+        f"{output_dir}/mosaic_success_all.png",
     )
-    plt.title(f"Gain Absolu : {solver_amelio} vs {solver_base}", pad=20, fontsize=14)
-    plt.xlabel("Densité $d$", fontsize=12)
-    plt.ylabel("Dimension $n$", fontsize=12)
-    plt.xticks(rotation=45)
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close()
-    print(f"  > [OK] Diff-Heatmap : {output_path}")
 
 
-def generate_all_diffs_for_base(records: list[RunRecord], solver_base: str, output_dir="results"):
-    df = records_to_df(records)
+# =====================================================================
+# Success rate diff heatmaps (vs reference)
+# =====================================================================
+
+def plot_all_success_rate_heatmaps_mosaic(
+    agg_records: list[AggRecord], solver_base: str, output_dir="results",
+):
+    """One heatmap per solver: success rate gain vs reference (-100 to +100%)."""
+    os.makedirs(output_dir, exist_ok=True)
+    df = _prepare_df(agg_records)
     solvers = df["solver"].unique()
+
     if solver_base not in solvers:
-        print(f"[Attention] '{solver_base}' absent des résultats.")
+        print(f"[Warning] '{solver_base}' not in results.")
         return
 
     targets = [s for s in solvers if s != solver_base]
-    print(f"\n--- Diff-Heatmaps (base : {solver_base}) ---")
-    for t in targets:
-        safe_b = solver_base.replace(" ", "_").replace("(", "").replace(")", "").replace("->", "_to_")
-        safe_t = t.replace(" ", "_").replace("(", "").replace(")", "").replace("->", "_to_")
-        path = f"{output_dir}/diff_{safe_b}_vs_{safe_t}.png"
-        try:
-            plot_heatmap_diff(records, solver_base, t, output_path=path)
-        except Exception as e:
-            print(f"  > [Erreur] {solver_base} vs {t}: {e}")
-    print(f"--- Terminé ---")
+    if not targets:
+        return
+
+    fig, axes = _make_grid(len(targets))
+    pivot_base = df[df["solver"] == solver_base].groupby(["n", "density"])["success"].mean().unstack()
+
+    print(f"\n--- Mosaic: Success Gain vs {solver_base} ---")
+    for i, name in enumerate(targets):
+        pivot_t = df[df["solver"] == name].groupby(["n", "density"])["success"].mean().unstack()
+        diff = pivot_t.sub(pivot_base, fill_value=0)
+
+        sns.heatmap(
+            diff, annot=False, linewidths=0, cmap="RdBu",
+            center=0, vmin=-100, vmax=100, cbar=False, ax=axes[i],
+            **_tick_skip(diff),
+        )
+        axes[i].set_title(f"{name} vs {solver_base}", pad=15, fontsize=13, fontweight="bold")
+        axes[i].set_xlabel("Densité $d$")
+        axes[i].set_ylabel("Dimension $n$")
+        axes[i].tick_params(axis="x", rotation=45)
+
+    _cleanup_and_save(
+        fig, axes, len(targets), "RdBu",
+        mcolors.Normalize(vmin=-100, vmax=100),
+        "Gain de Succès (%)",
+        f"{output_dir}/SR_heatmaps_vs_{solver_base}.png",
+    )
 
 
-# ===================================================================
+# =====================================================================
 # Time heatmaps
-# ===================================================================
+# =====================================================================
 
-def plot_all_time_heatmaps(records: list[RunRecord], output_dir="results"):
-    """One heatmap per solver showing median solve time (log scale)."""
+def generate_time_mosaic(agg_records: list[AggRecord], output_dir="results", timeout_val=10):
+    """One heatmap per solver: median solve time (log scale)."""
     os.makedirs(output_dir, exist_ok=True)
-
-    df = records_to_df(records)
-    df["density"] = df["density"].round(2)
+    df = _prepare_df(agg_records)
     solvers = df["solver"].unique()
-    print(f"Génération de {len(solvers)} time-heatmaps...")
+    n_solvers = len(solvers)
+    if n_solvers == 0:
+        return
 
-    for name in solvers:
-        safe = name.replace(" ", "_").replace("(", "").replace(")", "")
-        path = f"{output_dir}/time_{safe}.png"
-        subset = df[df["solver"] == name]
-        pivot = subset.groupby(["n", "density"])["time"].median().unstack()
+    # Global log scale bounds
+    valid_times = df["time"][df["time"] > 0]
+    global_min = max(valid_times.min(), 1e-4) if not valid_times.empty else 1e-4
+    global_max = timeout_val
+    norm = mcolors.LogNorm(vmin=global_min, vmax=global_max)
 
-        plt.figure(figsize=(10, 8))
+    fig, axes = _make_grid(n_solvers)
+
+    print(f"\n--- Mosaic: Solve Time (log) ---")
+    for i, name in enumerate(solvers):
+        pivot = df[df["solver"] == name].groupby(["n", "density"])["time"].median().unstack()
+        pivot = pivot.fillna(timeout_val)
+
         sns.heatmap(
-            pivot, linewidths=0, annot=False, cmap="YlOrRd",
-            norm=mcolors.LogNorm(vmin=max(pivot.min().min(), 1e-4), vmax=pivot.max().max()),
-            yticklabels=max(1, len(pivot) // 8),
-            xticklabels=max(1, len(pivot.columns) // 6),
-            cbar_kws={"label": "Temps médian (s, log)"},
+            pivot, annot=False, linewidths=0, cmap="YlOrRd",
+            norm=norm, cbar=False, ax=axes[i],
+            **_tick_skip(pivot),
         )
-        plt.title(f"Temps de résolution : {name}", pad=15)
-        plt.xlabel("Densité $d$")
-        plt.ylabel("Dimension $n$")
-        plt.xticks(rotation=45)
-        plt.savefig(path, dpi=300, bbox_inches="tight")
-        plt.close()
-        print(f"  > [OK] {path}")
+        axes[i].set_title(name, pad=15, fontsize=13, fontweight="bold")
+        axes[i].set_xlabel("Densité $d$")
+        axes[i].set_ylabel("Dimension $n$")
+        axes[i].tick_params(axis="x", rotation=45)
 
-
-# ===================================================================
-# Speedup heatmaps
-# ===================================================================
-
-def plot_speedup_heatmap(
-    records: list[RunRecord],
-    solver_base: str,
-    solver_fast: str,
-    output_path="results/speedup.png",
-):
-    """Heatmap of speedup = median_time(base) / median_time(fast), log-scale diverging at 1."""
-    df = records_to_df(records)
-    df["density"] = df["density"].round(2)
-
-    t_base = df[df["solver"] == solver_base].groupby(["n", "density"])["time"].median().unstack()
-    t_fast = df[df["solver"] == solver_fast].groupby(["n", "density"])["time"].median().unstack()
-
-    # Avoid division by zero
-    speedup = t_base / t_fast.replace(0, np.nan)
-
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(
-        speedup, annot=False, linewidths=0,
-        cmap="RdBu",
-        norm=mcolors.LogNorm(vmin=0.1, vmax=10),
-        yticklabels=max(1, len(speedup) // 8),
-        xticklabels=max(1, len(speedup.columns) // 6),
-        cbar_kws={"label": "Speedup (log, >1 = plus rapide)"},
+    _cleanup_and_save(
+        fig, axes, n_solvers, "YlOrRd", norm,
+        "Temps médian (s, log)",
+        f"{output_dir}/mosaic_time_all.png",
     )
-    plt.title(f"Speedup : {solver_fast} vs {solver_base}", pad=20, fontsize=14)
-    plt.xlabel("Densité $d$", fontsize=12)
-    plt.ylabel("Dimension $n$", fontsize=12)
-    plt.xticks(rotation=45)
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close()
-    print(f"  > [OK] Speedup-Heatmap : {output_path}")
 
 
-def generate_all_speedups_for_base(records: list[RunRecord], solver_base: str, output_dir="results"):
-    """Generate a speedup heatmap for every solver vs solver_base."""
+# =====================================================================
+# Speedup heatmaps (vs reference)
+# =====================================================================
+
+def generate_speedup_mosaic(
+    agg_records: list[AggRecord], solver_base: str, output_dir="results", timeout_val=10,
+):
+    """One heatmap per solver: speedup vs reference (log scale, >1 = faster)."""
     os.makedirs(output_dir, exist_ok=True)
-
-    df = records_to_df(records)
+    df = _prepare_df(agg_records)
     solvers = df["solver"].unique()
+
     if solver_base not in solvers:
-        print(f"[Attention] '{solver_base}' absent des résultats.")
+        print(f"[Warning] '{solver_base}' not in results.")
         return
 
     targets = [s for s in solvers if s != solver_base]
-    print(f"\n--- Speedup-Heatmaps (base : {solver_base}) ---")
-    for t in targets:
-        safe_b = solver_base.replace(" ", "_").replace("(", "").replace(")", "").replace("->", "_to_")
-        safe_t = t.replace(" ", "_").replace("(", "").replace(")", "").replace("->", "_to_")
-        path = f"{output_dir}/speedup_{safe_b}_vs_{safe_t}.png"
-        try:
-            plot_speedup_heatmap(records, solver_base, t, output_path=path)
-        except Exception as e:
-            print(f"  > [Erreur] speedup {solver_base} vs {t}: {e}")
-    print(f"--- Terminé ---")
+    if not targets:
+        return
+
+    fig, axes = _make_grid(len(targets))
+    norm = mcolors.LogNorm(vmin=0.1, vmax=10)
+    t_base = df[df["solver"] == solver_base].groupby(["n", "density"])["time"].median().unstack().fillna(timeout_val)
+
+    print(f"\n--- Mosaic: Speedup vs {solver_base} ---")
+    for i, name in enumerate(targets):
+        t_fast = df[df["solver"] == name].groupby(["n", "density"])["time"].median().unstack().fillna(timeout_val)
+        speedup = t_base / t_fast.replace(0, np.nan)
+
+        if speedup.isna().all().all():
+            axes[i].set_title(f"{name} (no data)")
+            axes[i].axis("off")
+            continue
+
+        sns.heatmap(
+            speedup, annot=False, linewidths=0, cmap="RdBu",
+            norm=norm, cbar=False, ax=axes[i],
+            **_tick_skip(speedup),
+        )
+        axes[i].set_title(f"{name} vs {solver_base}", pad=15, fontsize=13, fontweight="bold")
+        axes[i].set_xlabel("Densité $d$")
+        axes[i].set_ylabel("Dimension $n$")
+        axes[i].tick_params(axis="x", rotation=45)
+
+    safe_base = solver_base.replace(" ", "_").replace("(", "").replace(")", "")
+    _cleanup_and_save(
+        fig, axes, len(targets), "RdBu", norm,
+        "Speedup (log, >1 = plus rapide)",
+        f"{output_dir}/mosaic_speedup_vs_{safe_base}.png",
+    )
 
 
-# ===================================================================
-# Multi-solver performance (4 panels)
-# ===================================================================
+# =====================================================================
+# Multi-solver performance (4 panels, for 1D density sweeps)
+# =====================================================================
 
 def plot_performance(
     stats: dict,
@@ -262,9 +317,9 @@ def plot_performance(
         plt.show()
 
 
-# ===================================================================
+# =====================================================================
 # LLL geometry diagnostics (4 panels)
-# ===================================================================
+# =====================================================================
 
 def plot_lll_geometry(
     records: list[RunRecord],

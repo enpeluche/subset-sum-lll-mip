@@ -39,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--blocks",    type=str, default="20",   help="BKZ blocks  (10,20,30)")
 
     # Control
-    p.add_argument("--suite",   type=str,   choices=["arch", "delta", "block", "tabu_comp", "exact_comp", "hybrid_comp", "cpsat_comp", "scaling", "gray", "gray_landscape"], default="arch")
+    p.add_argument("--suite",   type=str,   choices=["arch", "delta", "cpsat_formulation", "block", "tabu_comp", "exact_comp", "hybrid_comp", "cpsat_comp", "scaling", "gray", "gray_landscape"], default="arch")
     p.add_argument("--runs",    type=int,   default=10)
     p.add_argument("--timeout", type=float, default=5.0)
     p.add_argument("--gen",     type=str,   choices=["uniform", "super_inc", "crypto", "crypto_big"], default="crypto")

@@ -44,6 +44,7 @@ def build_solvers(ranges: dict, suite: str, timeout: float) -> dict:
         "scaling": _suite_scaling,
         "gray": _suite_gray_study,
         "gray_landscape": _suite_gray_landscape,
+        "cpsat_formulation": _suite_cpsat_formulation,
     }
     return builders[suite](deltas, blocks, base_delta, base_block, timeout)
 
@@ -105,6 +106,24 @@ def _suite_cpsat_comp(_deltas, _blocks, _bd, _bb, timeout):
         "Full Greedy":      partial(solve_full_greedy, tolerance_smart=3, timeout=timeout, workers=8),
     }
 
+def _suite_cpsat_formulation(_deltas, _blocks, _bd, _bb, timeout):
+    from solvers.solve_cpsat import solve_cpsat
+    from solvers.solve_cpsat_optim import (
+        solve_cpsat_satisfy,
+        solve_cpsat_minimize,
+        solve_cpsat_minimize_lll,
+        solve_cpsat_dual_lll,
+    )
+    return {
+        # Baseline
+        "Satisfy":       partial(solve_cpsat, timeout=timeout),
+        # Pure optimization (no LLL)
+        "Minimize":      partial(solve_cpsat_minimize, timeout=timeout),
+        # Optimization with LLL warm start + residual bound
+        "Minimize+LLL":  partial(solve_cpsat_minimize_lll, timeout=timeout),
+        # Dual phase: scout (optimize 30%) → solve (satisfy 70%)
+        "Dual+LLL":      partial(solve_cpsat_dual_lll, timeout=timeout, scout_ratio=0.3),
+    }
 
 # ------------------------------------------------------------------
 # Tabu suites

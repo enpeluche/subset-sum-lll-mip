@@ -8,12 +8,40 @@ from functools import partial
 
 from scipy.stats import fisher_exact, mannwhitneyu
 
-from .io import RunRecord, save_records
+from .io import RunRecord, AggRecord, aggregate_runs, save_agg_records
 
 
-# ---------------------------------------------------------------------------
+# =====================================================================
+# ANSI colors (single source of truth)
+# =====================================================================
+
+class _C:
+    """ANSI escape codes for terminal UI."""
+    RST      = "\033[0m"
+    BOLD     = "\033[1m"
+    DIM      = "\033[2m"
+    RED      = "\033[91m"
+    GRN      = "\033[92m"
+    YEL      = "\033[93m"
+    BLU      = "\033[94m"
+    GRY      = "\033[90m"
+    BOLD_RED = "\033[1;91m"
+
+    # Separators
+    SEP_RED  = f"{BOLD_RED}|{RST}"
+    SEP_GRY  = f"{DIM}|{RST}"
+
+
+# Column widths
+_WIDTHS = {"n": 3, "density": 7}
+_SR_W = 6
+_T_W = 10
+_BAR_W = 24
+
+
+# =====================================================================
 # Formatting
-# ---------------------------------------------------------------------------
+# =====================================================================
 
 def format_time_adaptive(seconds: float) -> str:
     """Format time dynamically as s, ms, µs or ns."""
@@ -29,9 +57,9 @@ def format_time_adaptive(seconds: float) -> str:
         return f"{seconds * 1e9:.0f} ns"
 
 
-# ---------------------------------------------------------------------------
+# =====================================================================
 # Helpers
-# ---------------------------------------------------------------------------
+# =====================================================================
 
 def _safe_call(func, **kwargs):
     """Call *func* forwarding only the kwargs it accepts (respects partial)."""
@@ -41,22 +69,67 @@ def _safe_call(func, **kwargs):
     return func(**filtered)
 
 
-# ---------------------------------------------------------------------------
+def _fmt_params(cfg, axes):
+    """Format parameter values for display (centered, gray separator)."""
+    parts = []
+    for ax in axes:
+        v = cfg[ax]
+        w = _WIDTHS.get(ax, 10)
+        parts.append(f"{v:^{w}}" if isinstance(v, int) else f"{v:^{w}.2f}")
+    return f" {_C.SEP_GRY} ".join(parts)
+
+
+def _raw_params_width(axes):
+    """Width of the params column without ANSI codes."""
+    return len(" | ".join(f"{'':^{_WIDTHS.get(ax, 10)}}" for ax in axes))
+
+
+# =====================================================================
+# Header builder
+# =====================================================================
+
+def _build_header(solver_names, display_axes):
+    """Build the three header lines (names, SR|Time, separator)."""
+    pw = _raw_params_width(display_axes)
+
+    # Line 1: solver names
+    h1_parts = []
+    for i, name in enumerate(solver_names):
+        width = _SR_W + _T_W + 6 - (5 if i == 0 else 0)
+        h1_parts.append(f"{_C.BOLD_RED}{name.upper():^{width}}{_C.RST}")
+    h1 = f"{_C.SEP_RED} {'':^{pw}} {_C.SEP_RED} " + f" {_C.SEP_RED} ".join(h1_parts) + f" {_C.SEP_RED}"
+
+    # Line 2: SR | Time sub-headers
+    h_params = f" {_C.SEP_GRY} ".join(f"{ax:^{_WIDTHS.get(ax, 10)}}" for ax in display_axes)
+    h2_parts, sep_parts = [], []
+    for i in range(len(solver_names)):
+        sw = _SR_W - 3 if i == 0 else _SR_W - 1
+        tw = _T_W - 3 if i == 0 else _T_W
+        h2_parts.append(f"{'SR':^{sw + 2}}{_C.SEP_GRY}{'Time':^{tw + 4}}")
+        sep_parts.append(f"{'-' * (sw + 3)}{_C.SEP_GRY}{'-' * (tw + 5)}")
+
+    h2 = f"{_C.SEP_RED} {h_params} {_C.SEP_RED} " + f" {_C.SEP_RED} ".join(h2_parts) + f" {_C.SEP_RED}"
+    sep = f"{_C.SEP_RED}{'-' * (pw + 2)}{_C.SEP_RED}" + f"{_C.SEP_RED}".join(sep_parts) + f"{_C.SEP_RED}"
+
+    return h1, h2, sep
+
+
+# =====================================================================
 # Public API
-# ---------------------------------------------------------------------------
+# =====================================================================
 
 def run_benchmark(runs, solvers, json_file, timeout, generator, ranges: dict, workers: int):
-    """Run all solvers over a parameter grid and persist results."""
+    """Run all solvers over a parameter grid and persist aggregated results."""
     keys = list(ranges.keys())
     combos = list(itertools.product(*ranges.values()))
     solver_names = list(solvers.keys())
 
     records: list[RunRecord] = []
+    agg_records: list[AggRecord] = []
     total = len(combos) * runs
     done = 0
 
     # Display config
-    COL_W, SR_W, T_W = 10, 6, 10
     varying = [k for k, v in ranges.items() if len(v) > 1]
     display_axes = varying or ["n", "density"]
     fixes = [f"{k}={v[0]}" for k, v in ranges.items() if k not in varying]
@@ -66,36 +139,33 @@ def run_benchmark(runs, solvers, json_file, timeout, generator, ranges: dict, wo
     print(f"Paramètres fixes : {', '.join(fixes)}")
     print(f"Runs par point   : {runs} | Total points : {len(combos)}")
 
-    # Header
-    h_params = " | ".join(f"{ax:<{COL_W - 1}}" for ax in display_axes)
-    pw = len(h_params)
-    h1 = f"| {'':<{pw}} | " + " | ".join(f"{n.upper():^{SR_W + T_W + 3}}" for n in solver_names) + " |"
-    h2 = f"| {h_params} | " + " | ".join(f"{'SR':<{SR_W}} | {'Time':<{T_W}}" for _ in solver_names) + " |"
-    sep = f"|{'-' * (pw + 2)}|" + "|".join(f"{'-' * (SR_W + 2)}|{'-' * (T_W + 2)}" for _ in solver_names) + "|"
-    print(f"\n{h1}\n{h2}\n{sep}")
-
+    h1, h2, sep = _build_header(solver_names, display_axes)
     t_start = time.monotonic()
+    last_n = None
 
     for params in combos:
         cfg = dict(zip(keys, params))
-        succ = {n: 0 for n in solver_names}
-        times = {n: [] for n in solver_names}
+        succ = {name: 0 for name in solver_names}
+        times = {name: [] for name in solver_names}
+
+        # Print header when n changes
+        current_n = cfg.get("n")
+        if current_n != last_n:
+            print(f"\n{h1}\n{h2}\n{sep}")
+            last_n = current_n
 
         for i in range(runs):
             instance = _safe_call(generator, **cfg)
             tmp = {}
 
             for name, solver in solvers.items():
-                _progress_bar(done, total, t_start, cfg, display_axes, COL_W)
-
-                res = _safe_call(solver, instance=instance, workers=workers)# <---------------------------------- solver here
-
+                _progress_bar(done, total, t_start, cfg, display_axes)
+                res = _safe_call(solver, instance=instance, workers=workers)
                 tmp[name] = res
-        
                 if res.solution is not None:
                     succ[name] += 1
                     times[name].append(res.elapsed)
-           
+
             records.append(RunRecord(
                 density=cfg.get("density", 0.0),
                 n=cfg.get("n", 0),
@@ -104,58 +174,44 @@ def run_benchmark(runs, solvers, json_file, timeout, generator, ranges: dict, wo
             ))
             done += 1
 
-        _freeze_row(cfg, display_axes, succ, times, solver_names, runs, SR_W, T_W, COL_W)
+        # Aggregate this (n, density) point and free raw records
+        agg_records.extend(aggregate_runs(records, runs))
+        records.clear()
 
-    save_records(records, json_file)
-    return records
+        _freeze_row(cfg, display_axes, succ, times, solver_names, runs)
 
-
-# ---------------------------------------------------------------------------
-# Terminal UI helpers
-# ---------------------------------------------------------------------------
-
-BAR_WIDTH = 24
-BAR_FILL = "█"
-BAR_EMPTY = "░"
+    save_agg_records(agg_records, json_file)
+    return agg_records
 
 
-def _fmt_params(cfg, axes, w):
-    parts = []
-    for ax in axes:
-        v = cfg[ax]
-        parts.append(f"{v:<{w - 1}}" if isinstance(v, int) else f"{v:<{w - 1}.2f}")
-    return " | ".join(parts)
+# =====================================================================
+# Terminal UI
+# =====================================================================
 
-
-def _progress_bar(done, total, t_start, cfg, axes, col_w):
+def _progress_bar(done, total, t_start, cfg, axes):
     """Overwrite current line with a progress bar + ETA."""
     pct = done / total if total else 0
-    filled = int(BAR_WIDTH * pct)
-    bar = BAR_FILL * filled + BAR_EMPTY * (BAR_WIDTH - filled)
+    filled = int(_BAR_W * pct)
+    bar = "█" * filled + "░" * (_BAR_W - filled)
 
     elapsed = time.monotonic() - t_start
-    if done > 0:
-        eta = elapsed / done * (total - done)
-        eta_str = format_time_adaptive(eta)
-    else:
-        eta_str = "..."
+    eta_str = format_time_adaptive(elapsed / done * (total - done)) if done > 0 else "..."
 
-    ps = _fmt_params(cfg, axes, col_w)
+    ps = _fmt_params(cfg, axes)
     line = (
-        f"\r\033[94m  {bar} {pct * 100:5.1f}%\033[0m"
-        f"  \033[90m{done}/{total}  ETA {eta_str}  [{ps}]\033[0m"
+        f"\r{_C.BLU}  {bar} {pct * 100:5.1f}%{_C.RST}"
+        f"  {_C.GRY}{done}/{total}  ETA {eta_str}  [{ps}]{_C.RST}"
     )
     sys.stdout.write(f"{line}\033[K")
     sys.stdout.flush()
 
 
-def _freeze_row(cfg, axes, succ, times, names, n_runs, sr_w, t_w, col_w):
-    ps = _fmt_params(cfg, axes, col_w)
+def _freeze_row(cfg, axes, succ, times, names, n_runs):
+    """Print the final row for one (n, density) point with statistical significance."""
+    ps = _fmt_params(cfg, axes)
     ref = names[0]
     t_ref = times[ref]
     avg_ref = sum(t_ref) / len(t_ref) if t_ref else 0.0
-
-    RST, GRY, GRN, RED, YEL = "\033[0m", "\033[90m", "\033[92m", "\033[91m", "\033[93m"
 
     parts = []
     for name in names:
@@ -163,33 +219,47 @@ def _freeze_row(cfg, axes, succ, times, names, n_runs, sr_w, t_w, col_w):
         has_data = len(t_cur) > 0
         avg = sum(t_cur) / len(t_cur) if t_cur else 0.0
         rate = succ[name] / n_runs
+        is_ref = (name == ref)
 
-        sr_sym, sr_col = " ", GRY
-        if name != ref:
-            _, p = fisher_exact([[succ[ref], n_runs - succ[ref]],
-                                 [succ[name], n_runs - succ[name]]])
-            if p < 0.05:  # type: ignore
+        # --- Statistical tests vs reference ---
+        sr_sym, sr_col = " ", _C.GRY
+        if not is_ref:
+            _, p = fisher_exact([
+                [succ[ref], n_runs - succ[ref]],
+                [succ[name], n_runs - succ[name]],
+            ])
+            if p < 0.05: #type: ignore
                 sr_sym = "+" if succ[name] > succ[ref] else "-"
-                sr_col = GRN if succ[name] > succ[ref] else RED
+                sr_col = _C.GRN if succ[name] > succ[ref] else _C.RED
 
-        t_sym, t_col = " ", GRY
-        if name != ref and t_ref and t_cur:
+        t_sym, t_col = " ", _C.GRY
+        if not is_ref and t_ref and t_cur:
             try:
                 if t_ref != t_cur:
                     res = mannwhitneyu(t_ref, t_cur)
                     if res.pvalue < 0.05:
-                        t_sym = "*"
-                        t_col = GRN if avg < avg_ref else RED
+                        t_sym = ">" if avg < avg_ref else "<"
+                        t_col = _C.GRN if avg < avg_ref else _C.RED
             except Exception:
                 pass
 
-        txt_col = GRN if rate == 1.0 else (YEL if rate > 0 else GRY)
-        t_label = format_time_adaptive(avg) if has_data else "-"
-        cell = (f" {txt_col}{rate * 100:>3.0f}%{RST}"
-                f"{'':>{sr_w - 5}}{sr_col}{sr_sym}{RST}"
-                f" | {txt_col}{t_label:<{t_w}}{RST}"
-                f"{t_col}{t_sym}{RST} ")
+        # --- Format cell ---
+        txt_col = _C.GRN if rate == 1.0 else (_C.YEL if rate > 0 else _C.GRY)
+        t_label = format_time_adaptive(avg) if has_data else f"{'-':^{_T_W}}"
+
+        if is_ref:
+            cell = (f" {txt_col}{rate * 100:>3.0f}%{_C.RST}"
+                    f" {_C.SEP_GRY} "
+                    f"{txt_col}{t_label:>{_T_W}}{_C.RST} ")
+        else:
+            cell = (f" {txt_col}{rate * 100:>3.0f}%{_C.RST}"
+                    f"{'':>{_SR_W - 5}}{sr_col}{sr_sym}{_C.RST}"
+                    f" {_C.SEP_GRY} "
+                    f"{txt_col}{t_label:>{_T_W}}{_C.RST}"
+                    f"  {t_col}{t_sym}{_C.RST} ")
+
         parts.append(cell)
 
-    sys.stdout.write(f"\r| {ps} |" + "|".join(parts) + "|\033[K\n")
+    line = f"\r{_C.SEP_RED} {ps} {_C.SEP_RED}" + _C.SEP_RED.join(parts) + f"{_C.SEP_RED}\033[K\n"
+    sys.stdout.write(line)
     sys.stdout.flush()
