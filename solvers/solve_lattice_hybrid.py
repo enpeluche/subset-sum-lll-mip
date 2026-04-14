@@ -58,6 +58,18 @@ def _resolve_scaling(instance, scaling):
         return scaling
     return strategies.get(scaling, 1 << n)
 
+def _adaptive_scaling(instance):
+    n = instance.n
+    # On regarde le nombre de bits du plus gros poids
+    bits_w = max(instance.weights).bit_length()
+    
+    if bits_w > 2 * n:
+        return 1 << n       # M = 2^n (Poids lourds)
+    elif bits_w > n:
+        return n            # M = n (Zone de combat)
+    else:
+        return int(n**0.5)  # M = sqrt(n) (Haute densité)
+
 def solve_lattice_hybrid(
     instance: SubsetSumInstance,
     strategy: str = "SEQ_LLL_BKZ", 
@@ -68,9 +80,12 @@ def solve_lattice_hybrid(
     workers: int = 8,
     timeout: float = 100.0
 ) -> SolveResult:
-    # Suppresion de INDEP_LLL_BKZ
+    # Suppresion de INDEP_LLL_BKZ 14-04
+    # BKZ Adaptif : 10 jusqu'a 20 puis n jusqu'à 30, 30 au dela
+    # scaling à n a l'air pas mal pi sqert n    
     # Fusion probable de indep et seq au profit de la plus rapide
     # profit de adaptive bkz si il se démarque
+    # scaling adaptatif
 
     start = time.perf_counter()
     n = instance.n
@@ -83,20 +98,31 @@ def solve_lattice_hybrid(
 
     # 1. Scaling et Préparation de la matrice
     scaling_val = _resolve_scaling(instance, scaling)
+
+    if strategy == "SMART":
+        scaling_val = _adaptive_scaling(instance)
+        delta = 0.99
+
     B = instance.to_knapsack_matrix(M=scaling_val)
 
     # --- PHASE LLL ---
-    if strategy in ["LLL_ONLY", "SEQ_LLL_BKZ"]:
+    if strategy in ["LLL_ONLY", "SEQ_LLL_BKZ", "SMART"]:
         LLL.reduction(B, delta=delta, eta=eta)
         res, best_res, best_ham = _evaluate_basis(instance, B, start, f"{strategy}_LLL")
         if res: return res
 
     # --- PHASE BKZ ---
 
-    if strategy in ["BKZ_ONLY", "SEQ_LLL_BKZ", "ADAPTATIVE_BKZ"]:
+    if strategy in ["BKZ_ONLY", "SEQ_LLL_BKZ", "ADAPTATIVE_BKZ", "SMART"]:
         params = BKZ.Param(block_size=block_size)
-        if strategy == "ADAPTATIVE_BKZ":
-            params = BKZ.Param(block_size= max(2, min(n, block_size)))
+        if strategy in ["ADAPTATIVE_BKZ", "SMART"]:
+
+            if n < 20:
+                block_size = 10
+            else:
+                block_size =  max(2, min(n, block_size))
+
+            params = BKZ.Param(block_size= block_size)
         BKZ.reduction(B, params)
         res, best_res, best_ham = _evaluate_basis(instance, B, start, f"{strategy}_BKZ")
         if res: return res
@@ -104,7 +130,6 @@ def solve_lattice_hybrid(
     # --- PHASE FALLBACK (CP-SAT) ---
     elapsed = time.perf_counter() - start
     remaining = timeout - elapsed
-    remaining = 0
 
     if remaining > 0.1:
         fallback_result = solve_cpsat(instance, workers=workers, timeout=remaining)

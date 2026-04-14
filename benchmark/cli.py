@@ -47,10 +47,14 @@ def build_parser() -> argparse.ArgumentParser:
                                                      "exact_comp",
                                                      "lattice_hybrid_comp",
                                                      "cpsat_comp",
-                                                     "lattice_scaling",
+                                                     "cpsat_min_sat",
+                                                     "lattice_scaling_bkz",
+                                                     "lattice_scaling_lll",
                                                      "gray",
                                                      "gray_landscape",
-                                                     "lattice_bkz_adaptative"])
+                                                     "lattice_bkz_adaptative",
+                                                     "smart_lattice_cpsat"])
+    
     p.add_argument("--runs",    type=int,   default=10)
     p.add_argument("--timeout", type=float, default=5.0)
     p.add_argument("--gen",     type=str,   choices=["uniform", "super_inc", "crypto", "crypto_big"], default="crypto")

@@ -16,7 +16,13 @@ from solvers.solve_greedy_full import solve_full_greedy
 
 from solvers.solve_tabu import solve_tabu
 from solvers.solve_mitm import solve_mitm_classic
-
+from solvers.solve_cpsat import solve_cpsat
+from solvers.solve_cpsat_optim import (
+    solve_cpsat_satisfy,
+    solve_cpsat_minimize,
+    solve_cpsat_minimize_lll,
+    solve_cpsat_dual_lll,
+)
 def build_solvers(ranges: dict, suite: str, timeout: float) -> dict:
     """
     Return {name: partial(solve_lattice_hybrid, ...)} for the chosen suite.
@@ -49,6 +55,8 @@ def build_solvers(ranges: dict, suite: str, timeout: float) -> dict:
         "gray": _suite_gray_study,
         "gray_landscape": _suite_gray_landscape,
         "cpsat_formulation": _suite_cpsat_formulation,
+        "cpsat_min_sat": _suite_cpsat_min_sat,
+        "smart_lattice_cpsat": _suite_smart_lattice_cpsat,
     }
     return builders[suite](deltas, blocks, base_delta, base_block, timeout)
 
@@ -139,6 +147,16 @@ def _suite_lattice_arch(deltas, blocks, base_delta, base_block, timeout) -> Dict
         "SEQ (LLL->BKZ)": partial(solve_lattice_hybrid, strategy="SEQ_LLL_BKZ", **kw),
     }
 
+# Hybrid comparaison suites
+
+def _suite_smart_lattice_cpsat(deltas, blocks, base_delta, base_block, timeout) -> Dict[str, Callable]:
+    kw = dict(delta=base_delta, block_size=base_block, timeout=timeout)
+    return {
+        "Smart LLL->BKZ->Satisfy":            partial(solve_lattice_hybrid, strategy="SMART", **kw),
+        "Satisfy":       partial(solve_cpsat, timeout=timeout),
+        "Minimize":      partial(solve_cpsat_minimize, timeout=timeout),
+    }
+
 
 
 # ------------------------------------------------------------------
@@ -151,18 +169,18 @@ def _suite_cpsat_comp(_deltas, _blocks, _bd, _bb, timeout):
         "Greedy Bound":     partial(solve_cpsat_greedy_bound, tolerance=0, timeout=timeout, workers=8),
         "Smart Window":     partial(solve_cpsat_smart_window, tolerance=3, timeout=timeout, workers=8),
         "Smart+Tightening": partial(solve_cpsat_smart_tightened, tolerance=3, timeout=timeout, workers=8),
-        "Greedy Extreme":   partial(solve_greedy_extreme, max_subsets=2_000_000, timeout=timeout),
         "Full Greedy":      partial(solve_full_greedy, tolerance_smart=3, timeout=timeout, workers=8),
     }
 
+def _suite_cpsat_min_sat(_deltas, _blocks, _bd, _bb, timeout):
+    return {
+        "Satisfy":       partial(solve_cpsat, timeout=timeout),
+        "Minimize":      partial(solve_cpsat_minimize, timeout=timeout),
+    }  
+    
+
 def _suite_cpsat_formulation(_deltas, _blocks, _bd, _bb, timeout):
-    from solvers.solve_cpsat import solve_cpsat
-    from solvers.solve_cpsat_optim import (
-        solve_cpsat_satisfy,
-        solve_cpsat_minimize,
-        solve_cpsat_minimize_lll,
-        solve_cpsat_dual_lll,
-    )
+
     return {
         # Baseline
         "Satisfy":       partial(solve_cpsat, timeout=timeout),
@@ -206,11 +224,6 @@ def _suite_gray_landscape(_deltas, _blocks, _bd, _bb, timeout):
     from solvers.solve_tabu import solve_tabu
     from solvers.solve_cpsat import solve_cpsat
     return {
-        "CP-SAT Vanilla":      partial(solve_cpsat, timeout=timeout, workers=6),
-        "Gray Walk":            partial(solve_tabu, engine="gray_walk", warm_start="lll",
-                                        n_iter=2_000_000, timeout=timeout),
-        "Gray Tabu":            partial(solve_tabu, engine="gray", warm_start="lll",
-                                        n_iter=2_000_000, timeout=timeout),
         "Landscape Hints":      partial(solve_gray_landscape, confidence=0.3,
                                         fix_variables=False, timeout=timeout),
         "Landscape Fix":        partial(solve_gray_landscape, confidence=0.3,

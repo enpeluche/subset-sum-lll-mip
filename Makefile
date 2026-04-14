@@ -4,12 +4,13 @@
 # You can create a list in the followinf form : START:END:STEP
 
 # You hawe the following choices for sets
+#for cpsat, maybe use 15 * 50 * 50 = 37500
 
 PY = python
 RUNNER = benchmark.run_strategies_match
 
-RUNS = 100
-TIMEOUT = 0.1
+RUNS = 15
+TIMEOUT = 30
 
 GEN = crypto_big
 
@@ -42,6 +43,22 @@ lattice_bkz_adaptative:
 	$(BASE) --suite lattice_bkz_adaptative --blocks 10,20,30 --out lattice/bkz_adaptative
 
 all_lattice: lll_study bkz_study lattice_seq_indep lattice_scaling lattice_arch
+
+
+#-- CPSAT studies
+
+cpsat_min_sat:
+	$(BASE) --suite cpsat_min_sat --out cpsat/cpsat_min_sat
+
+
+#-- Hybrid studies
+smart_lattice_cpsat:
+	$(BASE) --suite smart_lattice_cpsat --out hybrid/smart_lattice_cpsat
+
+
+#--gray studies
+gray_landscape:
+	$(BASE) --suite gray_landscape --out gray/gray_landscape
 
 # arch
 # gerer le fallback
