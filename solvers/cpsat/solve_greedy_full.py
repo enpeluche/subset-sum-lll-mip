@@ -1,5 +1,7 @@
-from solvers.solve_greedy_cpsat import solve_cpsat_greedy_bound, solve_cpsat_smart_window, solve_cpsat_smart_tightened
-from solvers.solve_greedy_extreme import solve_greedy_extreme
+#solve_greedy_full.py
+
+from solvers.cpsat.solve_cpsat_greedy import solve_cpsat_greedy_bound, solve_cpsat_smart_window, solve_cpsat_smart_tightened
+from solvers.cpsat.solve_greedy_extreme import solve_greedy_extreme
 
 from SubsetSumInstance import SubsetSumInstance
 from results import SolveResult

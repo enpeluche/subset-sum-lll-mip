@@ -1,149 +1,169 @@
+"""
+Hybrid lattice solver: LLL → BKZ (adaptive) → return best candidate.
+
+Design choices validated by benchmarks:
+    - δ = 0.99 (δ study: 0.999 gives no SR gain, marginal speed cost)
+    - M = adaptive (scaling study: M=n best at high d, M=2^n at low d)
+    - SEQ architecture (arch study: INDEP identical SR, slightly slower)
+    - BKZ adaptive blocks
+"""
+
 import time
-from ortools.sat.python import cp_model
-from utils import filter_binary_vectors, extract_vectors_from_basis
+
 from fpylll import LLL, BKZ
+
+from utils import filter_binary_vectors, extract_vectors_from_basis
+
 from SubsetSumInstance import SubsetSumInstance
 from results import SolveResult
-from solvers.solve_cpsat import solve_cpsat
-from typing import Optional, Tuple
 
-def _evaluate_basis(
-    instance: SubsetSumInstance, 
-    B, 
-    start_time: float, 
-    label: str
-) -> Tuple[Optional[SolveResult], int, int | None]:
+def _evaluate_basis(instance: SubsetSumInstance, B, start: float, label: str) -> SolveResult:
     """
-    Méthode privée : Extrait la base, calcule les métriques et cherche une solution exacte.
-    Retourne un tuple : (SolveResult si solution trouvée sinon None, best_residual, best_hamming)
+    Analyze the reduced basis to extract solutions or the best available candidates.
+
+    Args:
+        instance: The SubsetSumInstance against which to validate vectors.
+        B: The reduced lattice basis (fpylll IntegerMatrix).
+        start: The performance counter timestamp from the beginning of the solver.
+        label: A string identifier (e.g., "LLL", "BKZ") for result tracking.
+
+    Returns:
+        A SolveResult object containing either an exact solution or metrics for 
+        the best-fit candidate found through vector clipping.
     """
     vectors = extract_vectors_from_basis(B)
+ 
+    if not vectors:
+        return SolveResult(
+            elapsed=time.perf_counter() - start,
+            status=3, label=f"{label}_NoVectors",
+            solution=None,
+        )
+ 
+    # 1. Check for exact binary solutions
+    for c in filter_binary_vectors(vectors):
+        if instance.is_solution(c):
+            return SolveResult.found(
+                elapsed=time.perf_counter() - start,
+                solution=c,
+                label=f"{label}_Direct",
+                hamming_to_ground_solution=instance.hamming_to_solution(c),
+            )
+ 
+    # 2. Clip all vectors to {0,1}, keep best by residual
+
+    best_clip = None
+    smallest_residual = float("inf")
+ 
+    for v in vectors:
+        clipped = [max(0, min(1, c)) for c in v]
+        residual = abs(instance.residual(clipped))
+        if residual < smallest_residual:
+            smallest_residual = residual
+            best_clip = clipped
+ 
+    return SolveResult(
+        elapsed=time.perf_counter() - start,
+        status=3, label=f"{label}_NoExact",
+        solution=None,
+        smallest_residual=int(smallest_residual),
+        hamming_to_ground_solution=instance.hamming_to_solution(best_clip) if best_clip else None,
+        hint=best_clip,
+    )
+
+#
+#   Adaptive
+#
+
+def _adaptive_scaling(instance: SubsetSumInstance) -> int:
+    """
+    Determine the optimal scaling factor M based on the instance's bit-load.
+
+    Args:
+        instance: The SubsetSumInstance to analyze.
+
+    Returns:
+        An integer scaling factor M tailored to the weight distribution.
+    """
     
-    # 1. Calcul des métriques de base
-    shortest_binary = [1 if c > 0 else 0 for c in vectors[0]]
-    best_residual = abs(instance.residual(shortest_binary))
-    best_hamming = instance.hamming_to_solution(shortest_binary)
-
-    # 2. Vérification des candidats binaires
-    candidates = filter_binary_vectors(vectors)
-    if candidates:
-        for c in candidates:
-            if instance.is_solution(c):
-                result = SolveResult(
-                    elapsed=time.perf_counter() - start_time,
-                    branches=0,
-                    conflicts=0,
-                    status=int(cp_model.OPTIMAL),
-                    solution=c,
-                    label=f"{label}_Direct_Exact",
-                    best_res=0,
-                    best_ham=0,
-                )
-                return result, best_residual, best_hamming
-                
-    return None, best_residual, best_hamming
-
-import math
-
-def _resolve_scaling(instance, scaling):
     n = instance.n
-    strategies = {
-        "sqrt_n": int(math.ceil(math.sqrt(n))),
-        "n":      n,
-        "sum_w":  sum(instance.weights),
-        "2n":     1 << n,
-        "2n2":    1 << (n // 2),
-    }
-    if isinstance(scaling, int):
-        return scaling
-    return strategies.get(scaling, 1 << n)
+    max_w = max(instance.weights) if instance.weights else 1
+    bits_w = max_w.bit_length()
 
-def _adaptive_scaling(instance):
-    n = instance.n
-    # On regarde le nombre de bits du plus gros poids
-    bits_w = max(instance.weights).bit_length()
-    
-    if bits_w > 2 * n:
-        return 1 << n       # M = 2^n (Poids lourds)
-    elif bits_w > n:
-        return n            # M = n (Zone de combat)
+    if bits_w >= 2 * n:
+        return 1 << n
+    elif bits_w >= n // 2:
+        return n
     else:
-        return int(n**0.5)  # M = sqrt(n) (Haute densité)
+        return int(n ** 0.5)
+
+def _adaptive_block_size(n: int) -> int:
+    """
+    Select the BKZ block size based on problem dimension to optimize the 
+    efficiency-time tradeoff.
+
+    Args:
+        n: The dimension of the lattice (number of weights).
+
+    Returns:
+        An integer block size optimized for the given dimension.
+    """
+    if n <= 15:
+        return min(n, 10)
+    elif n <= 25:
+        return 20
+    else:
+        return min(n, 30)
+    
+#
+#   Solver
+#
 
 def solve_lattice_hybrid(
     instance: SubsetSumInstance,
-    strategy: str = "SEQ_LLL_BKZ", 
-    scaling: int | str | None = None,
-    block_size: int = 30, # Sera utilisé comme plafond (max)
-    delta: float = 0.99,
-    eta: float = 0.51,
-    workers: int = 8,
-    timeout: float = 100.0
+    timeout: float = 10.0,
 ) -> SolveResult:
-    # Suppresion de INDEP_LLL_BKZ 14-04
-    # BKZ Adaptif : 10 jusqu'a 20 puis n jusqu'à 30, 30 au dela
-    # scaling à n a l'air pas mal pi sqert n    
-    # Fusion probable de indep et seq au profit de la plus rapide
-    # profit de adaptive bkz si il se démarque
-    # scaling adaptatif
+    """
+    Execute a multi-stage lattice reduction strategy for the Subset Sum Problem.
 
+    Args:
+        instance: The SubsetSumInstance containing weights and target sum.
+        timeout: Maximum execution time in seconds for the entire process.
+
+    Returns:
+        A SolveResult containing either an exact binary solution or the best 
+        candidate vector found through basis reduction and clipping.
+    """
     start = time.perf_counter()
-    n = instance.n
-
-    best_res, best_ham = None, None
-
-    # 0. Early exit
+ 
+    # Early exit
     if instance.is_trivially_infeasible:
         return SolveResult.trivially_infeasible(time.perf_counter() - start)
+ 
+    # Build lattice matrix
+    B = instance.to_knapsack_matrix(M=_adaptive_scaling(instance))
+ 
+    # --- LLL reduction ---
+    LLL.reduction(B, delta=0.99, eta=0.51)
+    lll_result = _evaluate_basis(instance, B, start, "LLL")
 
-    # 1. Scaling et Préparation de la matrice
-    scaling_val = _resolve_scaling(instance, scaling)
+    if lll_result.solution is not None:
+        return lll_result
+ 
+    # --- BKZ reduction (on the already-LLL-reduced basis) ---
+    if time.perf_counter() - start < timeout:
+        BKZ.reduction(B, BKZ.Param(block_size=_adaptive_block_size(instance.n)))
 
-    if strategy == "SMART":
-        scaling_val = _adaptive_scaling(instance)
-        delta = 0.99
+        bkz_result = _evaluate_basis(instance, B, start, "BKZ")
 
-    B = instance.to_knapsack_matrix(M=scaling_val)
-
-    # --- PHASE LLL ---
-    if strategy in ["LLL_ONLY", "SEQ_LLL_BKZ", "SMART"]:
-        LLL.reduction(B, delta=delta, eta=eta)
-        res, best_res, best_ham = _evaluate_basis(instance, B, start, f"{strategy}_LLL")
-        if res: return res
-
-    # --- PHASE BKZ ---
-
-    if strategy in ["BKZ_ONLY", "SEQ_LLL_BKZ", "ADAPTATIVE_BKZ", "SMART"]:
-        params = BKZ.Param(block_size=block_size)
-        if strategy in ["ADAPTATIVE_BKZ", "SMART"]:
-
-            if n < 20:
-                block_size = 10
-            else:
-                block_size =  max(2, min(n, block_size))
-
-            params = BKZ.Param(block_size= block_size)
-        BKZ.reduction(B, params)
-        res, best_res, best_ham = _evaluate_basis(instance, B, start, f"{strategy}_BKZ")
-        if res: return res
-
-    # --- PHASE FALLBACK (CP-SAT) ---
-    elapsed = time.perf_counter() - start
-    remaining = timeout - elapsed
-
-    if remaining > 0.1:
-        fallback_result = solve_cpsat(instance, workers=workers, timeout=remaining)
-        status_label = "Success" if fallback_result.solution else "Timeout"
-        
-        return SolveResult(
-            elapsed=time.perf_counter() - start,
-            branches=fallback_result.branches,
-            conflicts=fallback_result.conflicts,
-            status=fallback_result.status,
-            solution=fallback_result.solution,
-            label=f"{strategy}_Fallback_{status_label}",
-            best_res=best_res, #type: ignore
-            best_ham=best_ham, #type: ignore
-        )
-
-    return SolveResult.timeout(elapsed, label=f"{strategy}_Final_Timeout", res=best_res, ham=best_ham) #type: ignore
+        if bkz_result.solution is not None:
+            return bkz_result
+ 
+        # Keep the better of LLL and BKZ clips
+        if (bkz_result.smallest_residual is not None
+                and (lll_result.smallest_residual is None
+                     or bkz_result.smallest_residual < lll_result.smallest_residual)):
+            return bkz_result
+    
+    lll_result.elapsed = time.perf_counter() - start
+    return lll_result

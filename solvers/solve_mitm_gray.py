@@ -11,14 +11,10 @@ import time
 from SubsetSumInstance import SubsetSumInstance
 from results import SolveResult
 
-
+from solvers.gray import gray_bit as _gray_bit, mask_to_bits as _mask_to_bits
 # ---------------------------------------------------------------------------
-# Gray code helpers (I made a thesis on this subject)
+# Gray code helpers (I made a master thesis on this subject)
 # ---------------------------------------------------------------------------
-
-def _gray_bit(i: int) -> int:
-    """Return the index of the bit that flips between Gray(i-1) and Gray(i)."""
-    return (i & -i).bit_length() - 1
 
 
 def _build_table_gray(weights: list[int]) -> dict[int, int]:
@@ -51,19 +47,9 @@ def _build_table_gray(weights: list[int]) -> dict[int, int]:
     return table
 
 
-def _mask_to_bits(mask: int, length: int) -> list[int]:
-    """Convert a bitmask to a list of 0/1 of given length."""
-    return [(mask >> j) & 1 for j in range(length)]
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-def solve_mitm_classic(
+def solve_mitm_gray(
     instance: SubsetSumInstance,
     max_subsets: int = 1 << 22,
-    workers: int = 6
 ) -> SolveResult:
     """
     Meet-in-the-Middle with Gray code enumeration.
@@ -133,13 +119,20 @@ def solve_mitm_classic(
                     break
 
     elapsed = time.perf_counter() - start
+
+    if solution:
+        return SolveResult.found(
+            elapsed=elapsed,
+            solution=solution,
+            label="MITM_Found",
+            branches=branches,
+            hamming_to_ground_solution=instance.hamming_to_solution(solution),
+        )
+
     return SolveResult(
         elapsed=elapsed,
+        status=3,
+        label="MITM_NotFound",
+        solution=None,
         branches=branches,
-        conflicts=0,
-        status=0 if solution else 3,
-        solution=solution,
-        label="MITM_Found" if solution else "MITM_NotFound",
-        best_res=0 if solution else None,
-        best_ham=instance.hamming_to_solution(solution) if solution else None,
     )
